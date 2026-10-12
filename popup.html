@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TV OHLC Extractor</title>
+  <style>
+    /* Compact popup theme: TradingView-dark inspired, no external CSS needed. */
+    :root {
+      --bg: #131722;
+      --panel: #1e2530;
+      --border: #2a2e39;
+      --text: #d1d4dc;
+      --muted: #787b86;
+      --accent: #2962ff;
+      --accent-hover: #1e53e5;
+      --green: #26a69a;
+      --red: #ef5350;
+    }
+    * { box-sizing: border-box; }
+    body {
+      width: 380px;
+      margin: 0;
+      padding: 14px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      font-size: 13px;
+    }
+    h1 { font-size: 14px; margin: 0 0 2px; }
+    .sub { color: var(--muted); font-size: 11px; margin-bottom: 10px; }
+    .status {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 11px; color: var(--muted); margin-bottom: 10px;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .dot.ok { background: var(--green); }
+    .dot.err { background: var(--red); }
+    .dot.live { background: var(--accent); animation: pulse 1.2s infinite; }
+    @keyframes pulse { 50% { opacity: 0.4; } }
+    .row { display: flex; gap: 8px; margin-bottom: 10px; }
+    button {
+      flex: 1;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--panel);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 12px;
+    }
+    button:hover:not(:disabled) { border-color: var(--accent); }
+    button:disabled { opacity: 0.5; cursor: default; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.primary:hover:not(:disabled) { background: var(--accent-hover); }
+    /* Toggle switch */
+    .toggle-wrap {
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      margin-bottom: 10px;
+      font-size: 12px;
+    }
+    .switch { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; inset: 0; border-radius: 20px;
+      background: var(--border); transition: 0.2s; cursor: pointer;
+    }
+    .slider::before {
+      content: ""; position: absolute; width: 14px; height: 14px;
+      left: 3px; top: 3px; border-radius: 50%; background: #fff; transition: 0.2s;
+    }
+    input:checked + .slider { background: var(--accent); }
+    input:checked + .slider::before { transform: translateX(16px); }
+    textarea {
+      width: 100%; height: 220px; resize: vertical;
+      background: #0f1420; color: #c9f7d4;
+      border: 1px solid var(--border); border-radius: 6px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 11px; padding: 8px; white-space: pre;
+    }
+    .hint { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+    .hint code { color: var(--text); }
+    /* Historical range export section */
+    .divider { border: 0; border-top: 1px solid var(--border); margin: 12px 0 10px; }
+    .section-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+    .field {
+      display: grid; grid-template-columns: 44px 1fr; gap: 8px; align-items: center;
+      margin-bottom: 8px; font-size: 12px; color: var(--muted);
+    }
+    input[type="datetime-local"], select, input[type="text"] {
+      width: 100%; padding: 7px 8px;
+      background: var(--panel); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      font-size: 12px; color-scheme: dark;
+    }
+    input[type="datetime-local"]:focus, select:focus, input[type="text"]:focus { outline: none; border-color: var(--accent); }
+    .range-note { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.5; min-height: 16px; }
+    .range-note.warn { color: #ffb74d; }
+    .range-note.err { color: var(--red); }
+    .range-note.ok { color: var(--green); }
+  </style>
+</head>
+<body>
+  <h1>📈 TV OHLC Extractor</h1>
+  <div class="sub">Real-time OHLC + indicators from any TradingView chart</div>
+
+  <div class="status">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">Connecting…</span>
+  </div>
+
+  <div class="row">
+    <button id="captureBtn" class="primary">⦉ Capture Current Candle</button>
+  </div>
+
+  <div class="toggle-wrap">
+    <span>🔴 Stream Live Data</span>
+    <label class="switch" title="Push legend updates into this popup live">
+      <input type="checkbox" id="streamToggle" />
+      <span class="slider"></span>
+    </label>
+  </div>
+
+  <textarea id="output" readonly spellcheck="false" placeholder='Click "Capture Current Candle" while a TradingView chart tab is active…'></textarea>
+
+  <div class="row" style="margin-top:10px;">
+    <button id="copyBtn">📋 Copy to Clipboard</button>
+    <button id="downloadBtn">⬇ JSON</button>
+  </div>
+
+  <hr class="divider" />
+
+  <!-- Historical range → Excel-compatible CSV -->
+  <div class="section-title">📅 Historical Range Export</div>
+  <div class="field">
+    <label for="timeframeSelect">Timeframe</label>
+    <select id="timeframeSelect">
+      <option value="3m" selected>3 minutes (3m)</option>
+      <option value="auto">Auto (Active on Chart)</option>
+      <option value="1s">1 second (1s)</option>
+      <option value="5s">5 seconds (5s)</option>
+      <option value="15s">15 seconds (15s)</option>
+      <option value="30s">30 seconds (30s)</option>
+      <option value="1m">1 minute (1m)</option>
+      <option value="5m">5 minutes (5m)</option>
+      <option value="15m">15 minutes (15m)</option>
+      <option value="30m">30 minutes (30m)</option>
+      <option value="45m">45 minutes (45m)</option>
+      <option value="1h">1 hour (1h)</option>
+      <option value="2h">2 hours (2h)</option>
+      <option value="3h">3 hours (3h)</option>
+      <option value="4h">4 hours (4h)</option>
+      <option value="1D">1 Day (1D)</option>
+      <option value="1W">1 Week (1W)</option>
+      <option value="1M">1 Month (1M)</option>
+      <option value="custom">Custom...</option>
+    </select>
+  </div>
+  <div class="field" id="customTfField" style="display:none;">
+    <label for="customTfInput">Custom</label>
+    <input type="text" id="customTfInput" placeholder="e.g. 2m, 12h, 3D" />
+  </div>
+  <div class="field">
+    <label for="startInput">Start</label>
+    <input type="datetime-local" id="startInput" step="60" />
+  </div>
+  <div class="field">
+    <label for="endInput">End</label>
+    <input type="datetime-local" id="endInput" step="60" />
+  </div>
+  <div class="row">
+    <button id="fetchBtn" class="primary">⬇ Fetch &amp; Export to Excel (CSV)</button>
+  </div>
+  <div class="range-note" id="rangeNote"></div>
+  <div class="row" style="margin-top:8px;">
+    <button id="diagnoseBtn" title="Probe every frame of this tab and report where the chart legend lives">🩺 Diagnose chart access</button>
+  </div>
+
+  <div class="hint">
+    Works on <code>tradingview.com</code> charts &amp; embeds, any timeframe.
+    Streaming follows your crosshair + new candles in real time.
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
