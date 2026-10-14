@@ -330,6 +330,95 @@ async function t14_outOfMarketHoursLoadedBarsFallback() {
   check(lines.length === 21, `21 lines total: header + 20 candles (got ${lines.length})`);
 }
 
+async function t15_multiPlotPineScriptModelPoints() {
+  console.log('\nT15 Multi-plot Pine Script indicators per-bar continuous historical values');
+  const candleCount = 10;
+  const mockStudies = [
+    {
+      name: 'MktBreadth (SENSEX, Top 30, 5, 21, true, true, 14, 60, 40, true, 10, 1.5, Index Weightage %, true, t)',
+      plots: ['Combined Breadth', 'Adaptive Signal', 'Breadth Momentum'],
+      points: [],
+    },
+    {
+      name: 'VolSTEALTH v7',
+      plots: ['Volume', 'Volume MA'],
+      points: [],
+    },
+  ];
+
+  const firstHarness = bootTVDom({ model: true, candleCount });
+  const candles = firstHarness.candles;
+
+  for (let i = 0; i < candleCount; i++) {
+    const cTime = candles[i].epochMs;
+    mockStudies[0].points.push({
+      index: i,
+      epochMs: cTime,
+      value: [
+        +(10 + i * 2.5).toFixed(2),
+        +(-5 + i * 1.2).toFixed(2),
+        +(3 + i * 0.8).toFixed(2),
+      ],
+    });
+    mockStudies[1].points.push({
+      index: i,
+      epochMs: cTime,
+      value: [
+        +(150 + i * 10).toFixed(1),
+        +(140 + i * 8).toFixed(1),
+      ],
+    });
+  }
+
+  const { send } = bootTVDom({ model: true, candleCount, studies: mockStudies });
+  const startMs = candles[0].epochMs;
+  const endMs = candles[candleCount - 1].epochMs;
+  const res = await send({ type: 'TV_FETCH_RANGE', startMs, endMs });
+  const d = res?.data ?? {};
+  check(res?.ok === true, `ok (error=${res?.error ?? ''})`);
+  check(d.count === candleCount, `exported ${candleCount} candles`);
+
+  const lines = (d.csv ?? '').split('\r\n');
+  check(lines.length === candleCount + 1, `CSV has header + ${candleCount} rows (got ${lines.length})`);
+
+  const parseCSVRow = (line) => {
+    const re = /(?:^|,)(?:"([^"]*(?:""[^"]*)*)"|([^",]*))/g;
+    const out = [];
+    let m;
+    while ((m = re.exec(line)) !== null) {
+      if (m.index === re.lastIndex) re.lastIndex++;
+      out.push(m[1] !== undefined ? m[1].replace(/""/g, '"') : (m[2] ?? ''));
+    }
+    return out;
+  };
+
+  const headerCols = parseCSVRow(lines[0]);
+  const combinedIdx = headerCols.findIndex((c) => c.includes('Combined Breadth'));
+  const adaptiveIdx = headerCols.findIndex((c) => c.includes('Adaptive Signal'));
+  const breadthMomIdx = headerCols.findIndex((c) => c.includes('Breadth Momentum'));
+  const stealthVolIdx = headerCols.findIndex((c) => c.includes('VolSTEALTH') && c.includes('Volume'));
+
+  check(combinedIdx !== -1, 'Combined Breadth column exists in CSV');
+  check(adaptiveIdx !== -1, 'Adaptive Signal column exists in CSV');
+  check(breadthMomIdx !== -1, 'Breadth Momentum column exists in CSV');
+  check(stealthVolIdx !== -1, 'VolSTEALTH Volume column exists in CSV');
+
+  const r1 = parseCSVRow(lines[1]);
+  const rLast = parseCSVRow(lines[candleCount]);
+
+  check(r1[combinedIdx] !== '' && r1[combinedIdx] != null, `row 1 Combined Breadth populated (got ${r1[combinedIdx]})`);
+  check(rLast[combinedIdx] !== '' && rLast[combinedIdx] != null, `last row Combined Breadth populated (got ${rLast[combinedIdx]})`);
+  check(r1[combinedIdx] !== rLast[combinedIdx], `values change per candle (row 1: ${r1[combinedIdx]}, last: ${rLast[combinedIdx]})`);
+
+  check(r1[breadthMomIdx] !== '' && r1[breadthMomIdx] != null, `row 1 Breadth Momentum populated (got ${r1[breadthMomIdx]})`);
+  check(rLast[breadthMomIdx] !== '' && rLast[breadthMomIdx] != null, `last row Breadth Momentum populated (got ${rLast[breadthMomIdx]})`);
+  check(r1[breadthMomIdx] !== rLast[breadthMomIdx], `breadth momentum changes per candle (row 1: ${r1[breadthMomIdx]}, last: ${rLast[breadthMomIdx]})`);
+
+  check(r1[stealthVolIdx] !== '' && r1[stealthVolIdx] != null, `row 1 VolSTEALTH populated (got ${r1[stealthVolIdx]})`);
+  check(rLast[stealthVolIdx] !== '' && rLast[stealthVolIdx] != null, `last row VolSTEALTH populated (got ${rLast[stealthVolIdx]})`);
+  check(r1[stealthVolIdx] !== rLast[stealthVolIdx], `VolSTEALTH changes per candle (row 1: ${r1[stealthVolIdx]}, last: ${rLast[stealthVolIdx]})`);
+}
+
 (async () => {
   const started = Date.now();
   await t1_capture();
@@ -346,6 +435,7 @@ async function t14_outOfMarketHoursLoadedBarsFallback() {
   await t12_calculatedIndicatorHistoricalValues();
   await t13_customPineScriptSweepBackfill();
   await t14_outOfMarketHoursLoadedBarsFallback();
+  await t15_multiPlotPineScriptModelPoints();
   console.log(`\n${pass} passed, ${fail} failed  (${((Date.now() - started) / 1000).toFixed(1)}s)`);
   process.exit(fail ? 1 : 0);
 })();

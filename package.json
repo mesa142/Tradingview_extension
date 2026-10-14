@@ -4,10 +4,17 @@
   "private": true,
   "description": "Manifest V3 extension that extracts OHLC + indicator data from TradingView charts. Dev-only tooling: `npm install` then `npm test` runs the jsdom end-to-end suite (node_modules is NOT loaded by Chrome).",
   "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "build": "node --check server.js && npm run check",
+    "lint": "npm run check",
     "test": "node tests/run.js",
     "check": "node --check content.js && node --check injected.js && node --check popup.js && node --check background.js"
   },
   "devDependencies": {
     "jsdom": "^30.0.0"
+  },
+  "dependencies": {
+    "express": "^5.3.0"
   }
 }

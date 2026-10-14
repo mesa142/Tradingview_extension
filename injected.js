@@ -384,7 +384,19 @@
               for (let i = fi; i <= li; i++) {
                 try {
                   const val = bObj.valueAt(i);
-                  if (val != null) pts.push(val);
+                  if (val != null) {
+                    let t = val.time ?? val.timestamp ?? val.t ?? null;
+                    if (t == null && Array.isArray(val) && val.length > 5 && typeof val[0] === 'number' && val[0] >= 1e8) {
+                      t = val[0];
+                    }
+                    if (t == null && bObj) {
+                      try { t = bObj.timeAt?.(i) ?? bObj.timeByIndex?.(i) ?? bObj.time?.(i) ?? bObj.times?.[i]; } catch {}
+                    }
+                    const item = (val && typeof val === 'object' && !Array.isArray(val))
+                      ? { ...val, index: val.index ?? i, i, time: t ?? val.time }
+                      : { index: i, value: val, time: t, i };
+                    pts.push(item);
+                  }
                 } catch { /* next index */ }
               }
               if (pts.length) bars = pts;
@@ -396,7 +408,63 @@
       if (!bars && !symbol && !timeframe) return null;
 
       const normalized = normalizeBars(bars);
+      // Reconstruct timestamps if any are missing via timeScale
+      const tsObj = (typeof chart.timeScale === 'function' ? chart.timeScale() : chart.timeScale)
+        ?? (typeof chart.model === 'function' ? chart.model()?.timeScale?.() : null)
+        ?? chart._timeScale;
+      try {
+        if (tsObj) {
+          for (const nb of normalized) {
+            if (nb.epochMs == null && nb.index != null) {
+              try {
+                const userT = tsObj.indexToUserTime?.(nb.index) ?? tsObj.userTime?.(nb.index) ?? tsObj.indexToTime?.(nb.index);
+                if (typeof userT === 'number' && userT > 1e8) {
+                  const s = timeToStamp(userT);
+                  nb.epochMs = s.epochMs;
+                  nb.iso = s.iso;
+                }
+              } catch (_) {}
+            }
+          }
+        }
+      } catch (_) {}
+
+      // Timeframe step fill if any timestamps are missing
+      try {
+        const normTf = toTvResolution(timeframe) || timeframe || '5';
+        const mMin = String(normTf).match(/^(\d+)m?$/i);
+        const tfMinutes = mMin ? Number(mMin[1]) : (normTf === 'D' || normTf === '1D' ? 1440 : (normTf === 'W' ? 10080 : 5));
+        const tfMs = (tfMinutes || 5) * 60 * 1000;
+
+        let anchorBar = normalized.find((b) => b && b.epochMs != null);
+        if (!anchorBar && normalized.length) {
+          const liveT = Math.floor(Date.now() / tfMs) * tfMs;
+          anchorBar = normalized[normalized.length - 1];
+          anchorBar.epochMs = liveT;
+          anchorBar.iso = new Date(liveT).toISOString();
+        }
+        if (anchorBar) {
+          const aIdx = normalized.indexOf(anchorBar);
+          for (let j = 0; j < normalized.length; j++) {
+            if (normalized[j].epochMs == null) {
+              const bTime = anchorBar.epochMs + (j - aIdx) * tfMs;
+              normalized[j].epochMs = bTime;
+              normalized[j].iso = new Date(bTime).toISOString();
+            }
+          }
+        }
+      } catch (_) {}
+
       const indexToMs = new Map();
+      for (let i = 0; i < normalized.length; i++) {
+        const nb = normalized[i];
+        if (nb.epochMs != null) {
+          indexToMs.set(i, nb.epochMs);
+          if (nb.index != null) indexToMs.set(nb.index, nb.epochMs);
+          if (nb.time != null) indexToMs.set(nb.time, nb.epochMs);
+        }
+      }
+
       if (Array.isArray(bars)) {
         for (let i = 0; i < bars.length; i++) {
           const b = bars[i];
@@ -426,10 +494,11 @@
           for (let i = fi; i <= li; i++) {
             const b = bObj.valueAt(i);
             if (b) {
-              const t = b.time ?? b.timestamp ?? (Array.isArray(b) ? b[0] : null);
+              const t = b.time ?? b.timestamp ?? (Array.isArray(b) ? b[0] : (Array.isArray(b.value) ? b.value[0] : null));
               const msVal = t != null ? timeToStamp(t).epochMs : null;
               if (msVal != null) {
                 indexToMs.set(i, msVal);
+                if (b.index != null) indexToMs.set(b.index, msVal);
               }
             }
           }
@@ -445,25 +514,55 @@
     }
   }
 
-  /** Normalize whatever bar shape TV internals give us into {time,open,high,low,close}. */
+  /** Normalize whatever bar shape TV internals give us into {index,time,epochMs,iso,open,high,low,close,volume}. */
   function normalizeBars(raw) {
     if (!Array.isArray(raw) || !raw.length) return [];
     // Range export needs deep history: keep up to 10k bars (newest-last).
     // Snapshot callers that only need the live candle slice the tail themselves.
     const tail = raw.length > 10000 ? raw.slice(-10000) : raw;
     const out = [];
-    for (const b of tail) {
+    for (let i = 0; i < tail.length; i++) {
       try {
+        const b = tail[i];
         if (!b || typeof b !== 'object') continue;
         const v = b.value ?? b[4] ?? b;
-        const t = b.time ?? b.timestamp ?? b[0];
-        const o = toNum(b.open ?? b.o ?? v?.[1] ?? v?.open);
-        const h = toNum(b.high ?? b.h ?? v?.[2] ?? v?.high);
-        const l = toNum(b.low ?? b.l ?? v?.[3] ?? v?.low);
-        const c = toNum(b.close ?? b.c ?? v?.[4] ?? v?.close ?? b.value);
+        let t = b.time ?? b.timestamp ?? b.t ?? b.timeMs;
+        let o = null, h = null, l = null, c = null, vol = null;
+
+        // Check array v: [time, open, high, low, close, volume] vs [open, high, low, close, volume]
+        if (Array.isArray(v) && v.length >= 4) {
+          if (typeof v[0] === 'number' && v[0] >= 1e8) {
+            if (t == null) t = v[0];
+            o = toNum(v[1]); h = toNum(v[2]); l = toNum(v[3]); c = toNum(v[4]);
+            if (v.length > 5) vol = toNum(v[5]);
+          } else {
+            o = toNum(v[0]); h = toNum(v[1]); l = toNum(v[2]); c = toNum(v[3]);
+            if (v.length > 4) vol = toNum(v[4]);
+          }
+        }
+
+        // Check array b: [index, time, open, high, low, close, volume]
+        if (Array.isArray(b)) {
+          if (t == null) {
+            if (typeof b[0] === 'number' && b[0] >= 1e8) t = b[0];
+            else if (typeof b[1] === 'number' && b[1] >= 1e8) t = b[1];
+          }
+          if (o == null && b.length >= 6 && typeof b[0] === 'number' && b[0] < 1e8 && typeof b[1] === 'number' && b[1] >= 1e8) {
+            o = toNum(b[2]); h = toNum(b[3]); l = toNum(b[4]); c = toNum(b[5]);
+            if (b.length > 6) vol = toNum(b[6]);
+          }
+        }
+
+        if (o == null) o = toNum(b.open ?? b.o ?? v?.open);
+        if (h == null) h = toNum(b.high ?? b.h ?? v?.high);
+        if (l == null) l = toNum(b.low ?? b.l ?? v?.low);
+        if (c == null) c = toNum(b.close ?? b.c ?? v?.close ?? b.value);
+        if (vol == null) vol = toNum(b.volume ?? b.vol ?? v?.volume ?? v?.vol);
+
         if (o == null && h == null && l == null && c == null) continue;
-        const { epochMs, iso } = timeToStamp(t ?? b.timeMs ?? null);
-        out.push({ time: t ?? null, epochMs, iso, open: o, high: h, low: l, close: c });
+        const { epochMs, iso } = timeToStamp(t ?? null);
+        const barIndex = b.index ?? (typeof b.i === 'number' ? b.i : (Array.isArray(b) && b.length >= 6 && typeof b[0] === 'number' && b[0] < 1e8 && typeof b[1] === 'number' && b[1] >= 1e8 ? b[0] : i));
+        out.push({ index: barIndex, time: t ?? null, epochMs, iso, open: o, high: h, low: l, close: c, volume: vol });
       } catch { /* skip malformed bar */ }
     }
     return out;
@@ -512,27 +611,36 @@
   /** Extract a numeric payload from one study point (skipping time keys). */
   function studyPointValue(raw) {
     try {
-      if (typeof raw === 'number') return Number.isFinite(raw) ? raw : null;
+      const nVal = toNum(raw);
+      if (nVal != null) return nVal;
       if (Array.isArray(raw)) {
-        // Multi-plot: map each element to number or null, preserving positions!
-        const mapped = raw.map((n) => (typeof n === 'number' && Number.isFinite(n) ? n : null));
+        let items = raw;
+        if (items.length > 1 && typeof items[0] === 'number' && items[0] >= 1e8) {
+          items = items.slice(1);
+        }
+        const mapped = items.map((n) => toNum(n));
         return mapped.some((n) => n != null) ? mapped : null;
       }
       if (raw && typeof raw === 'object') {
-        if (typeof raw.value === 'number' && Number.isFinite(raw.value)) return raw.value;
+        const directNum = toNum(raw.value);
+        if (directNum != null) return directNum;
         if (Array.isArray(raw.value)) {
-          const mapped = raw.value.map((n) => (typeof n === 'number' && Number.isFinite(n) ? n : null));
+          let items = raw.value;
+          if (items.length > 1 && typeof items[0] === 'number' && items[0] >= 1e8) {
+            items = items.slice(1);
+          }
+          const mapped = items.map((n) => toNum(n));
           return mapped.some((n) => n != null) ? mapped : null;
         }
-        const entries = Object.entries(raw).filter(([k]) => !/time|timestamp|date|index/i.test(k));
-        if (entries.length === 1 && typeof entries[0][1] === 'number') {
-          return Number.isFinite(entries[0][1]) ? entries[0][1] : null;
+        const entries = Object.entries(raw).filter(([k]) => !/time|timestamp|date|index|^i$/i.test(k));
+        if (entries.length === 1 && toNum(entries[0][1]) != null) {
+          return toNum(entries[0][1]);
         }
         if (entries.length > 1) {
           const obj = {};
           let hasVal = false;
           for (const [k, v] of entries) {
-            const num = typeof v === 'number' && Number.isFinite(v) ? v : null;
+            const num = toNum(v);
             if (num != null) hasVal = true;
             obj[k] = num;
           }
@@ -780,7 +888,6 @@
                 if (epochMs == null && normalizedBars && normalizedBars.length) {
                   const offset = normalizedBars.length - slice.length;
                   if (offset >= 0 && normalizedBars[offset + ptIdx]) {
-                    epochMs = normalizedBars[offset + ptIdx].epochMs;
                   } else if (offset < 0) {
                     const barIdx = ptIdx + offset;
                     if (barIdx >= 0 && normalizedBars[barIdx]) {
@@ -788,7 +895,13 @@
                     }
                   }
                 }
-                if (epochMs == null) continue;
+                if (epochMs == null && idx != null && normalizedBars) {
+                  const matchingBar = normalizedBars.find((b) => b && b.index === idx);
+                  if (matchingBar && matchingBar.epochMs != null) {
+                    epochMs = matchingBar.epochMs;
+                  }
+                }
+                if (epochMs == null && idx == null && ptIdx == null) continue;
 
                 let valRaw = p.value ?? p.v ?? p.values;
                 if (valRaw === undefined && Array.isArray(p)) {
@@ -812,7 +925,7 @@
                   valRaw = p;
                 }
                 const v = studyPointValue(valRaw);
-                pts.push({ epochMs, value: v });
+                pts.push({ index: idx ?? ptIdx, epochMs, value: v });
               } catch { /* skip bad point */ }
             }
             if (pts.length) out.push({ name: String(name).slice(0, 100), plots, points: pts });

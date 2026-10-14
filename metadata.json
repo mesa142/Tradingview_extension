@@ -1,0 +1,8 @@
+{
+  "name": "TradingView OHLC Extractor",
+  "description": "Extract real-time and historical OHLC data with technical indicators from TradingView charts to CSV",
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ],
+  "permissions": []
+}

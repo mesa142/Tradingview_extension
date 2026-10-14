@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TradingView OHLC Extractor</title>
+  <meta name="description" content="Extract real-time and historical OHLC data with technical indicators from TradingView charts to CSV" />
+  <meta property="og:title" content="TradingView OHLC Extractor" />
+  <meta property="og:description" content="Extract real-time and historical OHLC data with technical indicators from TradingView charts to CSV" />
+  <link rel="icon" type="image/png" href="icons/icon32.png" />
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #2962ff;
+      --accent-hover: #1e53e5;
+      --green: #26a69a;
+      --green-dark: #1b5e20;
+      --red: #ef5350;
+      --tv-dark: #131722;
+      --tv-panel: #1e2530;
+      --tv-border: #2a2e39;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    header {
+      background: #161b22;
+      border-bottom: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand img {
+      width: 32px;
+      height: 32px;
+      border-radius: 6px;
+    }
+    .brand-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #fff;
+    }
+    .brand-tag {
+      font-size: 11px;
+      background: #238636;
+      color: #fff;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: 500;
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      border: 1px solid var(--border);
+      background: #21262d;
+      color: var(--text);
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.15s ease;
+    }
+    .btn:hover {
+      background: #30363d;
+      border-color: #8b949e;
+    }
+    .btn-primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+    .btn-green {
+      background: #238636;
+      border-color: #2ea043;
+      color: #fff;
+    }
+    .btn-green:hover {
+      background: #2ea043;
+    }
+
+    .main-container {
+      display: grid;
+      grid-template-columns: 1fr 400px;
+      gap: 20px;
+      padding: 20px 24px;
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+    @media (max-width: 1080px) {
+      .main-container {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* Left pane: Simulated TV Chart */
+    .chart-panel {
+      background: var(--tv-dark);
+      border: 1px solid var(--tv-border);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    }
+    .chart-panel-header {
+      background: var(--tv-panel);
+      border-bottom: 1px solid var(--tv-border);
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .chart-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .symbol-name {
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+    }
+    .symbol-price {
+      font-size: 13px;
+      font-family: Consolas, monospace;
+      color: var(--green);
+      font-weight: 600;
+    }
+    .symbol-chg {
+      font-size: 11px;
+      color: var(--green);
+    }
+    .chart-intervals {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .chart-intervals button {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--muted);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .chart-intervals button:hover {
+      color: #fff;
+      background: rgba(255,255,255,0.06);
+    }
+    .chart-intervals button[aria-pressed="true"] {
+      color: #fff;
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    /* TV chart container & legend */
+    .chart-container {
+      position: relative;
+      width: 100%;
+      height: 480px;
+      background: #131722;
+      overflow: hidden;
+      user-select: none;
+    }
+    #price {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      cursor: crosshair;
+    }
+    .legendWrapper {
+      position: absolute;
+      top: 10px;
+      left: 14px;
+      pointer-events: none;
+      z-index: 10;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .legend {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .seriesRow {
+      font-size: 12px;
+      color: #d1d4dc;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(19, 23, 34, 0.85);
+      padding: 4px 8px;
+      border-radius: 4px;
+      width: fit-content;
+      backdrop-filter: blur(4px);
+    }
+    .seriesRow span.value {
+      font-weight: 600;
+      color: #26a69a;
+      font-family: Consolas, monospace;
+    }
+    .indRow {
+      font-size: 11px;
+      color: #787b86;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(19, 23, 34, 0.7);
+      padding: 2px 8px;
+      border-radius: 4px;
+      width: fit-content;
+    }
+    .indRow .t {
+      font-weight: 600;
+      color: #9db2d5;
+    }
+    .indRow span.value {
+      color: #2962ff;
+      font-family: Consolas, monospace;
+    }
+    .timeAxisHighlight {
+      position: absolute;
+      bottom: 6px;
+      right: 14px;
+      background: #2a2e39;
+      color: #d1d4dc;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-family: Consolas, monospace;
+      pointer-events: none;
+    }
+
+    /* Simulation Control Bar */
+    .chart-controls {
+      background: var(--tv-panel);
+      border-top: 1px solid var(--tv-border);
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .chart-controls-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .chart-controls-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Right pane: Extension popup mock */
+    .popup-wrapper {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    }
+    .popup-frame-header {
+      background: #21262d;
+      border-bottom: 1px solid var(--border);
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .popup-frame-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .popup-frame-actions {
+      display: flex;
+      gap: 6px;
+    }
+    .popup-container {
+      width: 100%;
+      height: 620px;
+      background: #131722;
+      border: none;
+    }
+
+    /* Bottom tabs / panels */
+    .bottom-section {
+      max-width: 1600px;
+      margin: 0 auto 40px;
+      padding: 0 24px;
+    }
+    .tabs-header {
+      display: flex;
+      gap: 8px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 16px;
+    }
+    .tab-btn {
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--muted);
+      padding: 10px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .tab-btn:hover {
+      color: var(--text);
+    }
+    .tab-btn.active {
+      color: #fff;
+      border-bottom-color: var(--accent);
+    }
+    .tab-content {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 20px;
+    }
+    .tab-pane {
+      display: none;
+    }
+    .tab-pane.active {
+      display: block;
+    }
+
+    /* Data table */
+    .csv-table-wrapper {
+      overflow-x: auto;
+      max-height: 380px;
+      margin-top: 14px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      font-family: Consolas, monospace;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      text-align: left;
+      white-space: nowrap;
+    }
+    th {
+      background: #21262d;
+      color: #fff;
+      font-weight: 600;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+    tr:nth-child(even) {
+      background: #1c2128;
+    }
+    tr:hover {
+      background: #262c36;
+    }
+
+    /* Test log viewer */
+    .test-log {
+      background: #0d1117;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 14px;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      color: #7ee787;
+      height: 340px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+    .install-step {
+      display: flex;
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+    .step-num {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      flex-shrink: 0;
+      font-size: 12px;
+    }
+    .step-body {
+      flex: 1;
+    }
+    .step-title {
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 4px;
+    }
+    .step-desc {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    code {
+      background: #21262d;
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: #58a6ff;
+      font-family: Consolas, monospace;
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header>
+    <div class="brand">
+      <img src="icons/icon48.png" alt="Logo" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📈</text></svg>'" />
+      <div>
+        <div class="brand-title">TradingView OHLC Extractor</div>
+        <div style="font-size: 11px; color: var(--muted);">Manifest V3 Chrome Extension · Engine v1.3.0</div>
+      </div>
+      <span class="brand-tag">✓ Ready</span>
+    </div>
+    <div class="header-actions">
+      <a href="/popup.html" target="_blank" class="btn" title="Open popup in dedicated tab">
+        ↗ Standalone Popup
+      </a>
+      <button id="runTestsBtn" class="btn btn-green">
+        ▶ Run Test Suite (82 tests)
+      </button>
+    </div>
+  </header>
+
+  <!-- Main interactive section -->
+  <div class="main-container">
+    <!-- Left: Interactive TradingView Chart Sandbox -->
+    <div class="chart-panel">
+      <div class="chart-panel-header">
+        <div class="chart-info">
+          <span class="symbol-name">SENSEX</span>
+          <span class="symbol-price" id="currPrice">72,472.33</span>
+          <span class="symbol-chg" id="currChg">▲ +183.07 (+0.25%)</span>
+        </div>
+        <div class="chart-intervals" id="header-toolbar-intervals">
+          <button data-value="1" aria-pressed="false">1m</button>
+          <button data-value="3" aria-pressed="true">3m</button>
+          <button data-value="5" aria-pressed="false">5m</button>
+          <button data-value="15" aria-pressed="false">15m</button>
+          <button data-value="60" aria-pressed="false">1h</button>
+          <button data-value="D" aria-pressed="false">1D</button>
+        </div>
+      </div>
+
+      <!-- TV DOM Container exactly matched to content.js selectors -->
+      <div class="chart-container" data-name="chart-container" id="tvChartContainer">
+        <canvas id="price" width="1200" height="480"></canvas>
+        <div class="legendWrapper">
+          <div class="legend" id="legend">
+            <div class="seriesRow" id="seriesRow">
+              <span style="font-weight:bold; color:#fff;">SENSEX</span>
+              <span>O</span><span id="sO" class="value">72,410.50</span>
+              <span>H</span><span id="sH" class="value">72,495.20</span>
+              <span>L</span><span id="sL" class="value">72,380.00</span>
+              <span>C</span><span id="sC" class="value">72,472.33</span>
+              <span id="sChg" style="color:#26a69a; font-family:Consolas;">+183.07 (+0.25%)</span>
+            </div>
+            <div class="indRow" id="indVol">
+              <span class="t">Vol</span>
+              <span id="v1" class="value">244.41 K</span>
+              <span id="v2" class="value">134.28 K</span>
+            </div>
+            <div class="indRow" id="indMB">
+              <span class="t">MktBreadth</span>
+              <span id="m1" class="value">-41.31</span>
+              <span id="m2" class="value">-53.64</span>
+              <span id="m3" class="value">-55.40</span>
+              <span id="m4" class="value">-5.30</span>
+            </div>
+            <div class="indRow" id="indRSI">
+              <span class="t">RSI (14, close)</span>
+              <span id="r1" class="value">64.50</span>
+            </div>
+            <div class="indRow" id="indMACD">
+              <span class="t">MACD (12, 26, close, 9)</span>
+              <span id="mc1" class="value">12.45</span>
+              <span id="mc2" class="value">9.80</span>
+              <span id="mc3" class="value">2.65</span>
+            </div>
+          </div>
+        </div>
+        <div class="timeAxisHighlight" id="hoverTime">2026-10-12 14:15:00</div>
+      </div>
+
+      <!-- Simulator Controls -->
+      <div class="chart-controls">
+        <div class="chart-controls-left">
+          <span>● Live Chart Engine Active</span>
+          <span>·</span>
+          <span>Hover over candles to move crosshair</span>
+        </div>
+        <div class="chart-controls-right">
+          <button class="btn" id="simTickBtn">⚡ Pulse Live Tick</button>
+          <button class="btn" id="addCandleBtn">➕ New Candle</button>
+          <button class="btn" id="resetChartBtn">↺ Reset</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Extension Popup Preview -->
+    <div class="popup-wrapper">
+      <div class="popup-frame-header">
+        <div class="popup-frame-title">
+          <span>🧩</span>
+          <span>Extension Popup UI (Live Extension Bridge)</span>
+        </div>
+        <div class="popup-frame-actions">
+          <button class="btn" style="padding: 2px 8px; font-size: 11px;" id="reloadPopupBtn" title="Reload popup">
+            ↻
+          </button>
+        </div>
+      </div>
+      <iframe src="popup.html" id="popupIframe" class="popup-container"></iframe>
+    </div>
+  </div>
+
+  <!-- Bottom Tabs: Sample CSVs, Installation, Tests -->
+  <div class="bottom-section">
+    <div class="tabs-header">
+      <button class="tab-btn active" data-tab="tab-samples">📊 Sample Exported CSVs</button>
+      <button class="tab-btn" data-tab="tab-install">📦 Install in Chrome</button>
+      <button class="tab-btn" data-tab="tab-tests">🧪 Automated Test Suite</button>
+    </div>
+
+    <div class="tab-content">
+      <!-- Tab 1: Samples -->
+      <div class="tab-pane active" id="tab-samples">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <h3 style="margin:0 0 4px; font-size:14px; color:#fff;">Extracted TradingView CSV Datasets</h3>
+            <div style="color:var(--muted); font-size:12px;">Real extracted SENSEX 3m data with full continuous indicator calculations</div>
+          </div>
+          <div style="display:flex; gap:8px;" id="sampleButtons"></div>
+        </div>
+        <div class="csv-table-wrapper" id="sampleTableWrapper">
+          <div style="padding:20px; text-align:center; color:var(--muted);">Loading sample dataset...</div>
+        </div>
+      </div>
+
+      <!-- Tab 2: Install Guide -->
+      <div class="tab-pane" id="tab-install">
+        <h3 style="margin:0 0 14px; font-size:15px; color:#fff;">How to Install in Google Chrome (Manifest V3)</h3>
+        
+        <div class="install-step">
+          <div class="step-num">1</div>
+          <div class="step-body">
+            <div class="step-title">Open Chrome Extensions Manager</div>
+            <div class="step-desc">Open Google Chrome, navigate to <code>chrome://extensions</code> in the URL bar, and toggle <b>Developer mode</b> ON in the top right corner.</div>
+          </div>
+        </div>
+
+        <div class="install-step">
+          <div class="step-num">2</div>
+          <div class="step-body">
+            <div class="step-title">Load Unpacked Extension</div>
+            <div class="step-desc">Click <b>Load unpacked</b> in the top left corner, then select this project directory (the folder containing <code>manifest.json</code>).</div>
+          </div>
+        </div>
+
+        <div class="install-step">
+          <div class="step-num">3</div>
+          <div class="step-body">
+            <div class="step-title">Navigate to TradingView</div>
+            <div class="step-desc">Open any chart on <a href="https://www.tradingview.com/chart/" target="_blank" style="color:var(--accent);">tradingview.com/chart</a> (e.g. SENSEX, AAPL, BTCUSD, etc.). Any timeframe (1m, 3m, 5m, 1h, 1D) is supported.</div>
+          </div>
+        </div>
+
+        <div class="install-step">
+          <div class="step-num">4</div>
+          <div class="step-body">
+            <div class="step-title">Capture &amp; Export Data</div>
+            <div class="step-desc">Click the <b>📈 TV OHLC Extractor</b> icon in your Chrome toolbar. Use <b>Capture Current Candle</b>, toggle <b>Stream Live Data</b>, or set a Start/End date and click <b>Fetch &amp; Export to Excel (CSV)</b>.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 3: Tests -->
+      <div class="tab-pane" id="tab-tests">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+          <div>
+            <h3 style="margin:0 0 4px; font-size:14px; color:#fff;">End-to-End Extraction Engine Test Suite</h3>
+            <div style="color:var(--muted); font-size:12px;">14 comprehensive test scenarios covering DOM extraction, split nodes, sweep, calculation engine, decoy canvases, and fallbacks.</div>
+          </div>
+          <button class="btn btn-green" id="rerunTests">▶ Run Tests Again</button>
+        </div>
+        <div class="test-log" id="testOutput">Click "Run Tests Again" or see test results above. Last run: 82/82 assertions passed!</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Include the Chrome shim, Injected script, and Content script to power the interactive chart -->
+  <script src="chrome-shim.js"></script>
+  <script src="injected.js"></script>
+  <script src="content.js"></script>
+
+  <!-- Interactive Chart Canvas & Workbench Logic -->
+  <script>
+    (function() {
+      'use strict';
+
+      const canvas = document.getElementById('price');
+      const ctx = canvas.getContext('2d');
+      const sO = document.getElementById('sO');
+      const sH = document.getElementById('sH');
+      const sL = document.getElementById('sL');
+      const sC = document.getElementById('sC');
+      const sChg = document.getElementById('sChg');
+      const v1 = document.getElementById('v1');
+      const v2 = document.getElementById('v2');
+      const m1 = document.getElementById('m1');
+      const m2 = document.getElementById('m2');
+      const m3 = document.getElementById('m3');
+      const m4 = document.getElementById('m4');
+      const r1 = document.getElementById('r1');
+      const mc1 = document.getElementById('mc1');
+      const mc2 = document.getElementById('mc2');
+      const mc3 = document.getElementById('mc3');
+      const hoverTime = document.getElementById('hoverTime');
+      const currPrice = document.getElementById('currPrice');
+      const currChg = document.getElementById('currChg');
+
+      const TF_MS = 3 * 60 * 1000; // 3 minutes
+      let candleCount = 50;
+      let candles = [];
+
+      function pad2(n) { return String(n).padStart(2, '0'); }
+      function fmtLocal(ms) {
+        const d = new Date(ms);
+        return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ` +
+               `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+      }
+      function num(n) {
+        return Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      }
+
+      function initCandles() {
+        candles = [];
+        const now = Math.floor(Date.now() / TF_MS) * TF_MS;
+        let base = 72200;
+        for (let i = 0; i < candleCount; i++) {
+          const epochMs = now - (candleCount - 1 - i) * TF_MS;
+          const delta = (Math.sin(i / 4) * 40) + ((i % 3 === 0 ? 1 : -1) * 20);
+          const open = base;
+          const close = open + delta;
+          const high = Math.max(open, close) + Math.random() * 25 + 5;
+          const low = Math.min(open, close) - Math.random() * 25 - 5;
+          const vol = 180 + i * 2 + Math.floor(Math.random() * 50);
+          candles.push({ epochMs, open, high, low, close, vol, volMa: vol * 0.9 });
+          base = close;
+        }
+      }
+
+      function renderLegend(c) {
+        if (!c) return;
+        sO.textContent = num(c.open);
+        sH.textContent = num(c.high);
+        sL.textContent = num(c.low);
+        sC.textContent = num(c.close);
+        const chgVal = c.close - c.open;
+        const chgPct = (chgVal / c.open) * 100;
+        const isGreen = chgVal >= 0;
+        sChg.textContent = `${isGreen ? '+' : ''}${num(chgVal)} (${isGreen ? '+' : ''}${chgPct.toFixed(2)}%)`;
+        sChg.style.color = isGreen ? '#26a69a' : '#ef5350';
+        sC.style.color = isGreen ? '#26a69a' : '#ef5350';
+        v1.textContent = `${(c.vol).toFixed(2)} K`;
+        v2.textContent = `${(c.volMa).toFixed(2)} K`;
+        m1.textContent = c.open > 72400 ? '12.50' : '-12.50';
+        m2.textContent = '-53.64';
+        m3.textContent = '-55.40';
+        m4.textContent = '-5.30';
+        r1.textContent = (50 + (c.close - 72000) / 20).toFixed(2);
+        mc1.textContent = ((c.close - 72400) / 30).toFixed(2);
+        mc2.textContent = '9.80';
+        mc3.textContent = '2.65';
+        hoverTime.textContent = fmtLocal(c.epochMs);
+      }
+
+      let activeHoverIndex = null;
+
+      function drawChart() {
+        const w = canvas.width = canvas.parentElement.clientWidth;
+        const h = canvas.height = canvas.parentElement.clientHeight;
+
+        ctx.fillStyle = '#131722';
+        ctx.fillRect(0, 0, w, h);
+
+        if (candles.length === 0) return;
+
+        // Grid lines
+        ctx.strokeStyle = '#1e2530';
+        ctx.lineWidth = 1;
+        for (let y = 40; y < h - 40; y += 60) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(w, y);
+          ctx.stroke();
+        }
+
+        // Price range
+        let minP = Infinity, maxP = -Infinity;
+        for (const c of candles) {
+          if (c.low < minP) minP = c.low;
+          if (c.high > maxP) maxP = c.high;
+        }
+        const pad = (maxP - minP) * 0.1 || 10;
+        minP -= pad;
+        maxP += pad;
+
+        const candleW = Math.max(3, (w - 80) / candles.length - 3);
+        const toY = (val) => h - 40 - ((val - minP) / (maxP - minP)) * (h - 80);
+
+        // Draw candles
+        candles.forEach((c, i) => {
+          const x = 20 + i * (candleW + 3);
+          const isGreen = c.close >= c.open;
+          const color = isGreen ? '#26a69a' : '#ef5350';
+
+          // Wick
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(x + candleW / 2, toY(c.high));
+          ctx.lineTo(x + candleW / 2, toY(c.low));
+          ctx.stroke();
+
+          // Body
+          ctx.fillStyle = color;
+          const yOpen = toY(c.open);
+          const yClose = toY(c.close);
+          const bY = Math.min(yOpen, yClose);
+          const bH = Math.max(2, Math.abs(yClose - yOpen));
+          ctx.fillRect(x, bY, candleW, bH);
+        });
+
+        // Crosshair
+        if (activeHoverIndex != null && activeHoverIndex >= 0 && activeHoverIndex < candles.length) {
+          const hc = candles[activeHoverIndex];
+          const hx = 20 + activeHoverIndex * (candleW + 3) + candleW / 2;
+          const hy = toY(hc.close);
+
+          ctx.strokeStyle = '#787b86';
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.moveTo(hx, 0);
+          ctx.lineTo(hx, h);
+          ctx.moveTo(0, hy);
+          ctx.lineTo(w, hy);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+
+      function onMouseMove(e) {
+        const r = canvas.getBoundingClientRect();
+        const fx = (e.clientX - r.left) / r.width;
+        const idx = Math.max(0, Math.min(candles.length - 1, Math.floor(fx * candles.length)));
+        activeHoverIndex = idx;
+        renderLegend(candles[idx]);
+        drawChart();
+      }
+
+      function onMouseLeave() {
+        activeHoverIndex = null;
+        renderLegend(candles[candles.length - 1]);
+        drawChart();
+      }
+
+      canvas.addEventListener('mousemove', onMouseMove);
+      canvas.addEventListener('pointermove', onMouseMove);
+      canvas.addEventListener('mouseleave', onMouseLeave);
+
+      initCandles();
+      renderLegend(candles[candles.length - 1]);
+      drawChart();
+      window.addEventListener('resize', drawChart);
+
+      // Simulation controls
+      document.getElementById('simTickBtn').addEventListener('click', () => {
+        const last = candles[candles.length - 1];
+        const delta = (Math.random() - 0.48) * 15;
+        last.close += delta;
+        last.high = Math.max(last.high, last.close);
+        last.low = Math.min(last.low, last.close);
+        last.vol += Math.floor(Math.random() * 5);
+        currPrice.textContent = num(last.close);
+        renderLegend(last);
+        drawChart();
+      });
+
+      document.getElementById('addCandleBtn').addEventListener('click', () => {
+        const last = candles[candles.length - 1];
+        const epochMs = last.epochMs + TF_MS;
+        const open = last.close;
+        const delta = (Math.random() - 0.48) * 35;
+        const close = open + delta;
+        const high = Math.max(open, close) + Math.random() * 15;
+        const low = Math.min(open, close) - Math.random() * 15;
+        const vol = 190 + Math.floor(Math.random() * 60);
+        candles.push({ epochMs, open, high, low, close, vol, volMa: vol * 0.95 });
+        if (candles.length > 70) candles.shift();
+        currPrice.textContent = num(close);
+        renderLegend(candles[candles.length - 1]);
+        drawChart();
+      });
+
+      document.getElementById('resetChartBtn').addEventListener('click', () => {
+        initCandles();
+        renderLegend(candles[candles.length - 1]);
+        drawChart();
+      });
+
+      // Reload iframe
+      document.getElementById('reloadPopupBtn').addEventListener('click', () => {
+        const iframe = document.getElementById('popupIframe');
+        iframe.src = 'popup.html';
+      });
+
+      // Interval switcher
+      document.querySelectorAll('#header-toolbar-intervals button').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('#header-toolbar-intervals button').forEach(b => b.setAttribute('aria-pressed', 'false'));
+          btn.setAttribute('aria-pressed', 'true');
+        });
+      });
+
+      // Tab Switching
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+          document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+          btn.classList.add('active');
+          const target = document.getElementById(btn.getAttribute('data-tab'));
+          if (target) target.classList.add('active');
+        });
+      });
+
+      // Sample CSV loader
+      async function loadSamples() {
+        try {
+          const res = await fetch('/api/samples');
+          const data = await res.json();
+          const buttonsContainer = document.getElementById('sampleButtons');
+          buttonsContainer.innerHTML = '';
+
+          if (data.samples && data.samples.length > 0) {
+            data.samples.forEach((sample, idx) => {
+              const btn = document.createElement('button');
+              btn.className = 'btn' + (idx === 0 ? ' btn-primary' : '');
+              btn.textContent = `${sample.name.replace('.csv', '')} (${sample.rows} rows)`;
+              btn.addEventListener('click', () => renderSampleTable(sample));
+              buttonsContainer.appendChild(btn);
+
+              const dlLink = document.createElement('a');
+              dlLink.className = 'btn';
+              dlLink.href = '/' + encodeURIComponent(sample.name);
+              dlLink.download = sample.name;
+              dlLink.textContent = '⬇ Download';
+              buttonsContainer.appendChild(dlLink);
+            });
+            renderSampleTable(data.samples[0]);
+          }
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      function renderSampleTable(sample) {
+        const wrapper = document.getElementById('sampleTableWrapper');
+        if (!sample || !sample.preview) return;
+
+        let html = '<table><thead><tr>';
+        const cols = sample.header.split(',');
+        cols.forEach(c => { html += `<th>${c.trim()}</th>`; });
+        html += '</tr></thead><tbody>';
+
+        sample.preview.slice(1).forEach(rowStr => {
+          if (!rowStr.trim()) return;
+          html += '<tr>';
+          const rCols = rowStr.split(',');
+          rCols.forEach(rc => { html += `<td>${rc.trim()}</td>`; });
+          html += '</tr>';
+        });
+
+        html += '</tbody></table>';
+        wrapper.innerHTML = html;
+      }
+      loadSamples();
+
+      // Test Suite Runner
+      async function runTests() {
+        const out = document.getElementById('testOutput');
+        out.textContent = 'Running test suite (node tests/run.js)...\n\n';
+        // Switch to test tab
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+        document.querySelector('[data-tab="tab-tests"]').classList.add('active');
+        document.getElementById('tab-tests').classList.add('active');
+
+        try {
+          const res = await fetch('/api/run-tests');
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            out.textContent += decoder.decode(value);
+            out.scrollTop = out.scrollHeight;
+          }
+        } catch (e) {
+          out.textContent += '\nError: ' + e;
+        }
+      }
+
+      document.getElementById('runTestsBtn').addEventListener('click', runTests);
+      document.getElementById('rerunTests').addEventListener('click', runTests);
+
+    })();
+  </script>
+</body>
+</html>

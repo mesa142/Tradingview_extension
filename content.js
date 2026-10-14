@@ -111,11 +111,10 @@
   const STREAM_DEFAULT_MS = 1000;
   const STREAM_MIN_MS = 400; // guard: MutationObserver + interval, don't melt CPU
 
-  // ---- Historical range-fetch tuning -------------------------------------
   const FETCH_MAX_BARS = 2000;      // safety cap: refuse ranges estimating more
   const FETCH_SCROLL_ATTEMPTS = 12; // max auto-pan iterations waiting for backfill
   const FETCH_SETTLE_MS = 1600;     // wait after each pan for TV to load history
-  const FETCH_SWEEP_STEPS = 500;    // crosshair-sweep pointer steps (dense sampling)
+  const FETCH_SWEEP_STEPS = 120;    // crosshair-sweep pointer steps (dense sampling)
 
   let injectedReady = false;
   let streaming = false;
@@ -1551,6 +1550,11 @@
         if (seen.has(dedupeKey)) continue;
         seen.add(dedupeKey);
         rows.push({ x, epochMs: ts, ...ohlc, indicators });
+        if (i >= 40 && diagnostics.legendChangedSteps === 0 && diagnostics.seriesFoundSteps >= 30) {
+          // Synthetic pointer events have zero effect on TradingView (isTrusted:false ignored).
+          // Stop early so we can immediately fall back to keyboard sweep.
+          break;
+        }
         if (i % 50 === 0 && i > 0) emitProgress('sweep', `Sweeping candles… ${rows.length} read`);
       } catch { /* one bad step must not kill the sweep */ }
     }
@@ -2315,19 +2319,38 @@
    */
   function buildRangeRows(bars, studies, symbol, timeframe) {
     const colMaps = [];
+    const tfMs = timeframeToMs(timeframe) || (3 * 60 * 1000);
+
+    // Ensure all bars have an epochMs so datetime and study joins are continuous
+    if (bars && bars.length) {
+      let refBar = bars.find((b) => b && b.epochMs != null);
+      if (!refBar) {
+        const liveT = Math.floor(Date.now() / tfMs) * tfMs;
+        refBar = bars[bars.length - 1];
+        refBar.epochMs = liveT;
+      }
+      const refIdx = bars.indexOf(refBar);
+      for (let j = 0; j < bars.length; j++) {
+        if (bars[j].epochMs == null) {
+          bars[j].epochMs = refBar.epochMs + (j - refIdx) * tfMs;
+        }
+      }
+    }
 
     for (const s of (studies ?? [])) {
       if (!s) continue;
       const sName = String(s.name ?? 'Indicator').trim().slice(0, 100);
-      const points = (s.points ?? []).filter((p) => p && p.epochMs != null);
+      const baseName = sName.replace(/\s*\([^)]*\).*$/, '').trim();
+      const points = (s.points ?? []).filter((p) => p && (p.epochMs != null || p.index != null));
       if (!points.length) continue;
 
-      let isMultiPlot = false;
       let plotNames = Array.isArray(s.plots) && s.plots.length ? s.plots : null;
-      let maxLen = 0;
+      let isMultiPlot = !!(plotNames && plotNames.length > 1);
+      let maxLen = plotNames ? plotNames.length : 0;
       let sampleKeys = null;
 
-      for (const p of points.slice(0, 50)) {
+      for (const p of points.slice(0, 100)) {
+        if (!p || p.value == null) continue;
         if (Array.isArray(p.value)) {
           isMultiPlot = true;
           if (p.value.length > maxLen) maxLen = p.value.length;
@@ -2339,20 +2362,50 @@
 
       if (!isMultiPlot) {
         const m = new Map();
-        for (const p of points) {
-          if (p.value != null) m.set(p.epochMs, p.value);
+        const indexMap = new Map();
+        const posMap = [];
+        for (let pi = 0; pi < points.length; pi++) {
+          const p = points[pi];
+          if (p.value != null) {
+            if (p.epochMs != null) m.set(p.epochMs, p.value);
+            if (p.index != null) indexMap.set(p.index, p.value);
+            posMap[pi] = p.value;
+          }
         }
-        colMaps.push({ colName: sName, map: m });
+        colMaps.push({
+          colName: sName,
+          altName: baseName !== sName ? baseName : null,
+          map: m,
+          indexMap,
+          posMap,
+        });
       } else if (sampleKeys && sampleKeys.length) {
         for (const k of sampleKeys) {
           const colNameWithSymbol = `${sName} › ${k}`;
           const colNameWithBracket = `${sName} [${k}]`;
+          const baseNameWithBracket = `${baseName} [${k}]`;
+          const baseNameWithSymbol = `${baseName} › ${k}`;
           const m = new Map();
-          for (const p of points) {
+          const indexMap = new Map();
+          const posMap = [];
+          for (let pi = 0; pi < points.length; pi++) {
+            const p = points[pi];
             const v = p.value?.[k];
-            if (v != null) m.set(p.epochMs, v);
+            if (v != null) {
+              if (p.epochMs != null) m.set(p.epochMs, v);
+              if (p.index != null) indexMap.set(p.index, v);
+              posMap[pi] = v;
+            }
           }
-          colMaps.push({ colName: colNameWithBracket, altName: colNameWithSymbol, map: m });
+          colMaps.push({
+            colName: colNameWithBracket,
+            altName: colNameWithSymbol,
+            baseBracket: baseNameWithBracket,
+            baseSymbol: baseNameWithSymbol,
+            map: m,
+            indexMap,
+            posMap,
+          });
         }
       } else {
         const count = plotNames ? Math.max(plotNames.length, maxLen) : maxLen;
@@ -2360,12 +2413,36 @@
           const plotLabel = plotNames && plotNames[i] ? plotNames[i] : String(i);
           const colNameWithSymbol = `${sName} › ${plotLabel}`;
           const colNameWithBracket = `${sName} [${plotLabel}]`;
+          const baseNameWithBracket = `${baseName} [${plotLabel}]`;
+          const baseNameWithSymbol = `${baseName} › ${plotLabel}`;
           const m = new Map();
-          for (const p of points) {
-            const v = Array.isArray(p.value) ? p.value[i] : (i === 0 ? p.value : null);
-            if (v != null) m.set(p.epochMs, v);
+          const indexMap = new Map();
+          const posMap = [];
+          for (let pi = 0; pi < points.length; pi++) {
+            const p = points[pi];
+            let v = null;
+            if (Array.isArray(p.value)) {
+              v = p.value[i];
+            } else if (p.value && typeof p.value === 'object') {
+              v = p.value[plotLabel] ?? p.value[String(i)] ?? (i === 0 ? p.value.value : null);
+            } else if (i === 0) {
+              v = p.value;
+            }
+            if (v != null) {
+              if (p.epochMs != null) m.set(p.epochMs, v);
+              if (p.index != null) indexMap.set(p.index, v);
+              posMap[pi] = v;
+            }
           }
-          colMaps.push({ colName: colNameWithBracket, altName: colNameWithSymbol, map: m });
+          colMaps.push({
+            colName: colNameWithBracket,
+            altName: colNameWithSymbol,
+            baseBracket: baseNameWithBracket,
+            baseSymbol: baseNameWithSymbol,
+            map: m,
+            indexMap,
+            posMap,
+          });
         }
       }
     }
@@ -2373,7 +2450,7 @@
     const indicatorCols = [...new Set(colMaps.map((c) => c.colName))];
     const missing = new Map(indicatorCols.map((c) => [c, 0]));
 
-    const rows = (bars ?? []).map((b) => {
+    const rows = (bars ?? []).map((b, bIdx) => {
       const row = {
         symbol, timeframe,
         epochMs: b.epochMs ?? null,
@@ -2382,7 +2459,11 @@
         low: b.low ?? null, close: b.close ?? null,
       };
       for (const c of colMaps) {
-        let v = c.map.get(b.epochMs);
+        let v = null;
+        if (b.epochMs != null) v = c.map.get(b.epochMs);
+        if ((v === undefined || v === null) && b.index != null) {
+          v = c.indexMap.get(b.index);
+        }
         if ((v === undefined || v === null) && b.epochMs != null) {
           // Nearest timestamp fallback within 180 seconds if exact ms key had tiny offset
           const bMs = b.epochMs;
@@ -2397,13 +2478,28 @@
           }
           if (bestVal != null) v = bestVal;
         }
+        // Positional alignment fallback if timestamps / bar indices were unaligned
+        if ((v === undefined || v === null) && c.posMap && c.posMap.length) {
+          const offset = c.posMap.length - bars.length;
+          const targetIdx = bIdx + offset;
+          if (targetIdx >= 0 && targetIdx < c.posMap.length && c.posMap[targetIdx] != null) {
+            v = c.posMap[targetIdx];
+          } else if (bIdx < c.posMap.length && c.posMap[bIdx] != null) {
+            v = c.posMap[bIdx];
+          }
+        }
+
         if (v === undefined || v === null) {
           row[c.colName] = null;
           if (c.altName) row[c.altName] = null;
+          if (c.baseBracket) row[c.baseBracket] = null;
+          if (c.baseSymbol) row[c.baseSymbol] = null;
           missing.set(c.colName, (missing.get(c.colName) ?? 0) + 1);
         } else {
           row[c.colName] = v;
           if (c.altName) row[c.altName] = v;
+          if (c.baseBracket) row[c.baseBracket] = v;
+          if (c.baseSymbol) row[c.baseSymbol] = v;
         }
       }
       return row;
@@ -2619,7 +2715,13 @@
           for (const k of Object.keys(currentIndicators)) {
             const alt1 = k.replace(' › ', ' [') + ']';
             const alt2 = k.replace(' [', ' › ').replace(']', '');
-            if (!indicatorCols.includes(k) && !indicatorCols.includes(alt1) && !indicatorCols.includes(alt2)) {
+            const kBase = k.replace(/\s*\([^)]*\)/, '');
+            const alt1Base = alt1.replace(/\s*\([^)]*\)/, '');
+            const alreadyPresent = indicatorCols.some((col) => {
+              const colBase = col.replace(/\s*\([^)]*\)/, '');
+              return col === k || col === alt1 || col === alt2 || colBase === kBase || colBase === alt1Base;
+            });
+            if (!alreadyPresent) {
               indicatorCols.push(k);
             }
           }
@@ -2687,7 +2789,17 @@
           bars = built.rows;
           if (currentIndicators && Object.keys(currentIndicators).length) {
             for (const k of Object.keys(currentIndicators)) {
-              if (!indicatorCols.includes(k)) indicatorCols.push(k);
+              const alt1 = k.replace(' › ', ' [') + ']';
+              const alt2 = k.replace(' [', ' › ').replace(']', '');
+              const kBase = k.replace(/\s*\([^)]*\)/, '');
+              const alt1Base = alt1.replace(/\s*\([^)]*\)/, '');
+              const alreadyPresent = indicatorCols.some((col) => {
+                const colBase = col.replace(/\s*\([^)]*\)/, '');
+                return col === k || col === alt1 || col === alt2 || colBase === kBase || colBase === alt1Base;
+              });
+              if (!alreadyPresent) {
+                indicatorCols.push(k);
+              }
             }
           }
           if (seriesEl && indicatorCols.length > 0) {
