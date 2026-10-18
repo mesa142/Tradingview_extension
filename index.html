@@ -574,14 +574,141 @@
   <!-- Bottom Tabs: Sample CSVs, Installation, Tests -->
   <div class="bottom-section">
     <div class="tabs-header">
-      <button class="tab-btn active" data-tab="tab-samples">📊 Sample Exported CSVs</button>
+      <button class="tab-btn active" data-tab="tab-alerts">⚡ Local PC Service & Alert Rules</button>
+      <button class="tab-btn" data-tab="tab-samples">📊 Sample Exported CSVs</button>
       <button class="tab-btn" data-tab="tab-install">📦 Install in Chrome</button>
       <button class="tab-btn" data-tab="tab-tests">🧪 Automated Test Suite</button>
     </div>
 
     <div class="tab-content">
+      <!-- Tab: Alert Engine & Local Service -->
+      <div class="tab-pane active" id="tab-alerts">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; flex-wrap:wrap; gap:12px;">
+          <div>
+            <h3 style="margin:0 0 4px; font-size:15px; color:#fff;">Tier 3 Local PC Service &amp; Condition Engine</h3>
+            <div style="color:var(--muted); font-size:12px;">
+              Active WebSocket Bridge: <code style="color:#7ee787;">ws://localhost:8765</code> &amp; <code style="color:#7ee787;">ws://localhost:3000</code> | 30-Day Auto Pruned SQLite
+            </div>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn-primary" id="refreshAlertsBtn">↻ Refresh Engine</button>
+            <button class="btn btn-green" id="runPhase1TestsBtn">🧪 Run Engine Tests</button>
+          </div>
+        </div>
+
+        <!-- Metrics bar -->
+        <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-bottom:16px;">
+          <div style="background:#131722; border:1px solid var(--border); border-radius:6px; padding:10px 14px;">
+            <div style="color:var(--muted); font-size:11px; text-transform:uppercase;">Engine State</div>
+            <div id="metricEngineStatus" style="font-size:16px; font-weight:700; color:#26a69a;">ONLINE</div>
+          </div>
+          <div style="background:#131722; border:1px solid var(--border); border-radius:6px; padding:10px 14px;">
+            <div style="color:var(--muted); font-size:11px; text-transform:uppercase;">Connected TV Tabs</div>
+            <div id="metricConnectedTabs" style="font-size:16px; font-weight:700; color:#fff;">0</div>
+          </div>
+          <div style="background:#131722; border:1px solid var(--border); border-radius:6px; padding:10px 14px;">
+            <div style="color:var(--muted); font-size:11px; text-transform:uppercase;">Total Rules</div>
+            <div id="metricTotalRules" style="font-size:16px; font-weight:700; color:#fff;">0</div>
+          </div>
+          <div style="background:#131722; border:1px solid var(--border); border-radius:6px; padding:10px 14px;">
+            <div style="color:var(--muted); font-size:11px; text-transform:uppercase;">Active / Paused</div>
+            <div id="metricActivePaused" style="font-size:16px; font-weight:700; color:#e6edf3;">0 / 0</div>
+          </div>
+        </div>
+
+        <!-- Rules Section -->
+        <div style="margin-bottom:20px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <h4 style="margin:0; font-size:13px; color:#fff;">Registered Alert Rules</h4>
+            <span style="font-size:11px; color:var(--muted);">Selective auto-pausing when indicators are null</span>
+          </div>
+          <div class="csv-table-wrapper" style="max-height:220px; margin-top:0;">
+            <table id="rulesTable">
+              <thead>
+                <tr>
+                  <th>Rule Name</th>
+                  <th>Symbol</th>
+                  <th>TF</th>
+                  <th>Status</th>
+                  <th>Condition Summary</th>
+                  <th>Triggers</th>
+                  <th>Last Triggered</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="rulesTableBody">
+                <tr><td colspan="8" style="text-align:center; color:var(--muted);">Loading rules...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Triggered Alerts Stream -->
+        <div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <h4 style="margin:0; font-size:13px; color:#fff;">Recent Triggered Alerts (30-Day Persistent SQLite)</h4>
+            <span style="font-size:11px; color:var(--muted);">Logged on strict FALSE → TRUE edges &amp; Intrabar reversals preserved</span>
+          </div>
+          <div class="csv-table-wrapper" style="max-height:220px; margin-top:0;">
+            <table id="alertsTable">
+              <thead>
+                <tr>
+                  <th>Time (UTC)</th>
+                  <th>Rule Name</th>
+                  <th>Symbol</th>
+                  <th>TF</th>
+                  <th>Type</th>
+                  <th>OHLC Snapshot</th>
+                  <th>Telegram Status</th>
+                </tr>
+              </thead>
+              <tbody id="alertsTableBody">
+                <tr><td colspan="7" style="text-align:center; color:var(--muted);">No alerts triggered yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Interactive Tick & Intrabar Simulator -->
+        <div style="margin-top:20px; background:#161b22; border:1px solid var(--border); border-radius:6px; padding:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+            <div>
+              <h4 style="margin:0 0 2px; font-size:13px; color:#fff;">⚡ Live Tick &amp; Intrabar Simulator</h4>
+              <span style="font-size:11px; color:var(--muted);">Simulate live TradingView ticks to test rule triggers, crossovers, and intrabar reversals</span>
+            </div>
+            <button class="btn btn-sm btn-primary" id="btnSimulateTick">🚀 Dispatch Simulated Tick</button>
+          </div>
+          <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap:10px;">
+            <div>
+              <label style="display:block; font-size:10px; color:var(--muted); margin-bottom:4px;">Symbol</label>
+              <input type="text" id="simSymbol" value="SENSEX" style="width:100%;" />
+            </div>
+            <div>
+              <label style="display:block; font-size:10px; color:var(--muted); margin-bottom:4px;">Timeframe</label>
+              <input type="text" id="simTf" value="5m" style="width:100%;" />
+            </div>
+            <div>
+              <label style="display:block; font-size:10px; color:var(--muted); margin-bottom:4px;">Close Price</label>
+              <input type="number" id="simClose" value="72850.0" step="0.5" style="width:100%;" />
+            </div>
+            <div>
+              <label style="display:block; font-size:10px; color:var(--muted); margin-bottom:4px;">RSI (14) Value</label>
+              <input type="number" id="simRsi" value="72.5" step="0.1" style="width:100%;" />
+            </div>
+            <div>
+              <label style="display:block; font-size:10px; color:var(--muted); margin-bottom:4px;">Candle State</label>
+              <select id="simCandleClose" style="width:100%;">
+                <option value="0">Intrabar Tick</option>
+                <option value="1">Candle Close (Confirmed)</option>
+              </select>
+            </div>
+          </div>
+          <div id="simFeedback" style="margin-top:8px; font-size:11px; color:var(--muted); font-family:Consolas, monospace;"></div>
+        </div>
+      </div>
+
       <!-- Tab 1: Samples -->
-      <div class="tab-pane active" id="tab-samples">
+      <div class="tab-pane" id="tab-samples">
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <div>
             <h3 style="margin:0 0 4px; font-size:14px; color:#fff;">Extracted TradingView CSV Datasets</h3>
@@ -943,18 +1070,146 @@
       }
       loadSamples();
 
-      // Test Suite Runner
-      async function runTests() {
+      // Local PC Alert Engine & Rules Dashboard Logic
+      async function loadEngineDashboard() {
+        try {
+          const res = await fetch('/api/status');
+          const data = await res.json();
+          document.getElementById('metricEngineStatus').textContent = data.status.toUpperCase();
+          document.getElementById('metricConnectedTabs').textContent = data.connectedTabsCount || 0;
+          document.getElementById('metricTotalRules').textContent = data.totalRulesCount || 0;
+          document.getElementById('metricActivePaused').textContent = `${data.activeRulesCount || 0} / ${data.pausedRulesCount || 0}`;
+
+          loadRulesList();
+          loadAlertsList();
+        } catch (e) {
+          console.error('Failed to load engine status:', e);
+        }
+      }
+
+      async function loadRulesList() {
+        try {
+          const res = await fetch('/api/rules');
+          const data = await res.json();
+          const tbody = document.getElementById('rulesTableBody');
+          if (!data.rules || data.rules.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; color:var(--muted); padding:16px;">No rules created yet.</td></tr>';
+            return;
+          }
+
+          tbody.innerHTML = data.rules.map(r => {
+            let statusBadge = '';
+            if (r.status === 'ACTIVE_TRUE') {
+              statusBadge = '<span style="background:#1b5e20; color:#4caf50; padding:2px 8px; border-radius:10px; font-weight:600; font-size:11px;">ACTIVE (TRUE)</span>';
+            } else if (r.status === 'ACTIVE_FALSE') {
+              statusBadge = '<span style="background:#0d47a1; color:#90caf9; padding:2px 8px; border-radius:10px; font-weight:600; font-size:11px;">ACTIVE (FALSE)</span>';
+            } else if (r.status === 'PAUSED_DATA_UNAVAILABLE') {
+              statusBadge = `<span title="${r.missing_reason || ''}" style="background:#e65100; color:#ffb74d; padding:2px 8px; border-radius:10px; font-weight:600; font-size:11px;">PAUSED (MISSING DATA)</span>`;
+            } else {
+              statusBadge = '<span style="background:#37474f; color:#b0bec5; padding:2px 8px; border-radius:10px; font-weight:600; font-size:11px;">DISABLED</span>';
+            }
+
+            const condSummary = formatConditionTreeSummary(r.condition_tree);
+            const lastTrig = r.last_triggered_at ? new Date(r.last_triggered_at).toLocaleTimeString() : '—';
+
+            return `
+              <tr>
+                <td style="font-weight:600; color:#fff;">${r.name}</td>
+                <td><code>${r.symbol}</code></td>
+                <td><code>${r.timeframe}</code></td>
+                <td>${statusBadge}</td>
+                <td style="color:var(--muted); max-width:240px; overflow:hidden; text-overflow:ellipsis;" title="${condSummary}">${condSummary}</td>
+                <td><b>${r.trigger_count}</b></td>
+                <td>${lastTrig}</td>
+                <td>
+                  <button class="btn" style="padding:2px 6px; font-size:11px;" onclick="window.toggleRule('${r.id}')">${r.status === 'DISABLED' ? 'Enable' : 'Disable'}</button>
+                  <button class="btn" style="padding:2px 6px; font-size:11px; color:#ef5350;" onclick="window.deleteRule('${r.id}')">Delete</button>
+                </td>
+              </tr>
+            `;
+          }).join('');
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      function formatConditionTreeSummary(tree) {
+        if (!tree) return '—';
+        if (tree.conditions && Array.isArray(tree.conditions)) {
+          const parts = tree.conditions.map(c => {
+            if (c.conditions) return `(${formatConditionTreeSummary(c)})`;
+            const left = c.leftSource?.indicatorKey || c.leftSource?.field || 'Left';
+            const right = c.rightSource?.type === 'VALUE' ? c.rightSource.value : (c.rightSource?.indicatorKey || 'Right');
+            return `${left} ${c.operator} ${right}`;
+          });
+          return parts.join(` ${tree.logicalOperator || 'AND'} `);
+        }
+        return 'Condition';
+      }
+
+      async function loadAlertsList() {
+        try {
+          const res = await fetch('/api/alerts?limit=25');
+          const data = await res.json();
+          const tbody = document.getElementById('alertsTableBody');
+          if (!data.alerts || data.alerts.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--muted); padding:16px;">No alerts triggered yet.</td></tr>';
+            return;
+          }
+
+          tbody.innerHTML = data.alerts.map(a => {
+            const timeStr = new Date(a.triggered_at).toISOString().replace('T', ' ').substring(0, 19);
+            const isCandleClose = a.is_candle_close === 1;
+            const typeBadge = isCandleClose 
+              ? '<span style="color:#26a69a; font-weight:600;">Candle Close</span>' 
+              : '<span style="color:#ffa726; font-weight:600;">Intrabar Tick</span>';
+            const ohlcv = a.snapshot?.ohlcv || {};
+            const ohlcvStr = `C: ${ohlcv.close ?? '—'} (O: ${ohlcv.open ?? '—'}, H: ${ohlcv.high ?? '—'}, L: ${ohlcv.low ?? '—'})`;
+            const tgBadge = a.telegram_sent 
+              ? '<span style="color:#4caf50;">✓ Sent</span>' 
+              : `<span style="color:#8b949e;" title="${a.telegram_error || 'Not sent'}">Not Sent</span>`;
+
+            return `
+              <tr>
+                <td><code>${timeStr}</code></td>
+                <td style="font-weight:600; color:#fff;">${a.rule_name}</td>
+                <td><code>${a.symbol}</code></td>
+                <td><code>${a.timeframe}</code></td>
+                <td>${typeBadge}</td>
+                <td style="font-size:11px; color:#c9d1d9;">${ohlcvStr}</td>
+                <td>${tgBadge}</td>
+              </tr>
+            `;
+          }).join('');
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      window.toggleRule = async function(id) {
+        await fetch(`/api/rules/${id}/toggle`, { method: 'POST' });
+        loadEngineDashboard();
+      };
+
+      window.deleteRule = async function(id) {
+        if (!confirm('Delete this alert rule?')) return;
+        await fetch(`/api/rules/${id}`, { method: 'DELETE' });
+        loadEngineDashboard();
+      };
+
+      document.getElementById('refreshAlertsBtn').addEventListener('click', loadEngineDashboard);
+
+      // Phase 1 tests runner button
+      document.getElementById('runPhase1TestsBtn').addEventListener('click', async () => {
         const out = document.getElementById('testOutput');
-        out.textContent = 'Running test suite (node tests/run.js)...\n\n';
-        // Switch to test tab
+        out.textContent = 'Running Phase 1 Condition Engine & SQLite Test Suite...\n\n';
         document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
         document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
         document.querySelector('[data-tab="tab-tests"]').classList.add('active');
         document.getElementById('tab-tests').classList.add('active');
 
         try {
-          const res = await fetch('/api/run-tests');
+          const res = await fetch('/api/run-phase1-tests');
           const reader = res.body.getReader();
           const decoder = new TextDecoder();
           while (true) {
@@ -966,11 +1221,84 @@
         } catch (e) {
           out.textContent += '\nError: ' + e;
         }
+      });
+
+      // WebSocket live updates for dashboard
+      function connectDashboardWs() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}`;
+        try {
+          const ws = new WebSocket(wsUrl);
+          ws.onmessage = (evt) => {
+            try {
+              const msg = JSON.parse(evt.data);
+              if (msg.type === 'ALERT_TRIGGERED' || msg.type === 'RULE_STATE_CHANGED' || msg.type === 'TAB_UPDATE' || msg.type === 'RULES_UPDATED') {
+                loadEngineDashboard();
+              }
+            } catch (e) {}
+          };
+          ws.onclose = () => setTimeout(connectDashboardWs, 3000);
+        } catch (e) {}
       }
 
-      document.getElementById('runTestsBtn').addEventListener('click', runTests);
-      document.getElementById('rerunTests').addEventListener('click', runTests);
+      // Live Tick Simulation Handler
+      document.getElementById('btnSimulateTick')?.addEventListener('click', async () => {
+        const sym = document.getElementById('simSymbol').value.trim() || 'SENSEX';
+        const tf = document.getElementById('simTf').value.trim() || '5m';
+        const close = parseFloat(document.getElementById('simClose').value) || 72850.0;
+        const rsi = parseFloat(document.getElementById('simRsi').value) || 72.5;
+        const isClose = parseInt(document.getElementById('simCandleClose').value, 10) === 1;
+        const fb = document.getElementById('simFeedback');
 
+        fb.textContent = 'Sending simulated tick to Local PC Service...';
+        fb.style.color = 'var(--muted)';
+
+        try {
+          const res = await fetch('/api/simulate-tick', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              symbol: sym,
+              timeframe: tf,
+              tabId: 'tab_web_simulator',
+              is_candle_close: isClose ? 1 : 0,
+              ohlcv: {
+                open: close - 20,
+                high: close + 30,
+                low: close - 40,
+                close: close,
+                volume: 250000
+              },
+              indicators: {
+                'RSI (14)__#1': {
+                  name: 'RSI (14)',
+                  instanceIndex: 1,
+                  isReadable: true,
+                  plots: {
+                    'Plot_1': { index: 0, value: rsi, available: true }
+                  }
+                }
+              }
+            })
+          });
+
+          const data = await res.json();
+          if (data.success) {
+            fb.textContent = `✓ Ingested successfully. Active Ring Buffer: ${data.evaluationResult?.bufferLength || 1} bars.`;
+            fb.style.color = '#26a69a';
+            loadEngineDashboard();
+          } else {
+            fb.textContent = `Error: ${data.error || 'Evaluation error'}`;
+            fb.style.color = '#ef5350';
+          }
+        } catch (e) {
+          fb.textContent = 'Network error: ' + e.message;
+          fb.style.color = '#ef5350';
+        }
+      });
+
+      loadEngineDashboard();
+      connectDashboardWs();
     })();
   </script>
 </body>

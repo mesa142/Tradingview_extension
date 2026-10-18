@@ -164,5 +164,35 @@
         },
       },
     },
+    notifications: {
+      create: (id, options, cb) => {
+        console.log('[Shim Notification]', id, options?.title, options?.message);
+        if (typeof cb === 'function') cb(id || 'shim_notif_' + Date.now());
+        return Promise.resolve(id || 'shim_notif_' + Date.now());
+      },
+      clear: (id, cb) => {
+        if (typeof cb === 'function') cb(true);
+        return Promise.resolve(true);
+      },
+    },
+    action: {
+      setBadgeText: async (details) => {},
+      setBadgeBackgroundColor: async (details) => {},
+    },
+    offscreen: {
+      createDocument: async (details) => {},
+      hasDocument: async () => false,
+      closeDocument: async () => {},
+      Reason: { AUDIO: 'AUDIO' },
+    },
+  };
+
+  window.chrome.tabs.onUpdated = {
+    addListener: () => {},
+    removeListener: () => {},
+  };
+  window.chrome.tabs.onRemoved = {
+    addListener: () => {},
+    removeListener: () => {},
   };
 })();

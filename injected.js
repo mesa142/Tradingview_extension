@@ -63,6 +63,61 @@
     };
   }
 
+  /** Unwraps TV internal Resolution / Interval objects to clean string ("1m", "5m", "1D"...) */
+  function unwrapTimeframe(val) {
+    if (val == null) return null;
+    if (typeof val === 'object') {
+      const candidate = val.value ?? val._value ?? val.interval ?? val.resolution ?? val.timeframe ?? val.tf ?? val.name ?? val.label ?? val.shortName ?? val.id ?? val.text;
+      if (candidate != null) {
+        if (typeof candidate === 'object') return unwrapTimeframe(candidate);
+        const candStr = String(candidate).trim();
+        if (candStr && !candStr.toLowerCase().includes('object')) return unwrapTimeframe(candStr);
+      }
+      if (typeof val.toString === 'function') {
+        const str = val.toString();
+        if (str && !str.toLowerCase().includes('object')) return unwrapTimeframe(str);
+      }
+      return null;
+    }
+    let s = String(val).trim();
+    if (!s || s.toLowerCase().includes('object') || s === 'undefined' || s === 'null') return null;
+    s = s.replace(/[\[\]"']/g, '').trim();
+    const num = Number(s);
+    if (!isNaN(num) && num > 0) {
+      if (num === 60) return '1h';
+      if (num === 120) return '2h';
+      if (num === 240) return '4h';
+      return `${num}m`;
+    }
+    return s;
+  }
+
+  function cleanSymbol(val) {
+    if (val == null) return 'SYMBOL';
+    if (typeof val === 'object') {
+      const cand = val.symbol ?? val.ticker ?? val.name ?? val.value ?? val.pair;
+      if (cand) return cleanSymbol(cand);
+      return 'SYMBOL';
+    }
+    let s = String(val).trim();
+    if (!s || s.toLowerCase().includes('object') || s === 'undefined' || s === 'null' || s === 'UNKNOWN') return 'SYMBOL';
+    return s.split('•')[0].trim().toUpperCase();
+  }
+
+  function parseTimeframeToMs(tf) {
+    const clean = unwrapTimeframe(tf) || '1m';
+    const m = String(clean).match(/^(\d+)([smhdwSMHDW]?)$/);
+    if (!m) return 60000;
+    const num = parseInt(m[1], 10) || 1;
+    const unit = (m[2] || 'm').toLowerCase();
+    if (unit === 's') return num * 1000;
+    if (unit === 'm') return num * 60 * 1000;
+    if (unit === 'h') return num * 3600 * 1000;
+    if (unit === 'd') return num * 86400 * 1000;
+    if (unit === 'w') return num * 604800 * 1000;
+    return num * 60 * 1000;
+  }
+
   // ---------------------------------------------------------------------------
   // Probe 1: official widget library (embedded widgets + some TV pages)
   //   window.TradingView.widget instances expose chart() / activeChart().
@@ -271,10 +326,10 @@
         else if (typeof chart.symbolInterval === 'function') {
           const si = chart.symbolInterval();
           symbol = si?.symbol ?? si?.pair ?? null;
-          timeframe = si?.interval ?? null;
+          timeframe = unwrapTimeframe(si?.interval);
         }
         if (!timeframe && typeof chart.resolution === 'function') {
-          timeframe = chart.resolution();
+          timeframe = unwrapTimeframe(chart.resolution());
         }
 
         for (const m of uniqueModels) {
@@ -290,14 +345,14 @@
               else if (typeof m.symbolInterval === 'function') {
                 const si = m.symbolInterval();
                 symbol = si?.symbol ?? si?.pair ?? null;
-                if (!timeframe) timeframe = si?.interval ?? null;
+                if (!timeframe) timeframe = unwrapTimeframe(si?.interval);
               }
             } catch { /* ignore */ }
           }
           if (!timeframe) {
             try {
-              if (typeof m.resolution === 'function') timeframe = m.resolution();
-              else if (typeof m.interval === 'function') timeframe = m.interval();
+              if (typeof m.resolution === 'function') timeframe = unwrapTimeframe(m.resolution());
+              else if (typeof m.interval === 'function') timeframe = unwrapTimeframe(m.interval());
             } catch { /* ignore */ }
           }
         }
@@ -309,9 +364,9 @@
               ?? ms._symbol ?? (typeof ms.title === 'function' ? ms.title() : null) ?? null;
           }
           if (!timeframe) {
-            timeframe = (typeof ms.interval === 'function' ? ms.interval() : ms.interval)
-              ?? (typeof ms.resolution === 'function' ? ms.resolution() : ms.resolution)
-              ?? ms._interval ?? null;
+            timeframe = unwrapTimeframe(typeof ms.interval === 'function' ? ms.interval() : ms.interval)
+              ?? unwrapTimeframe(typeof ms.resolution === 'function' ? ms.resolution() : ms.resolution)
+              ?? unwrapTimeframe(ms._interval) ?? null;
           }
         }
       } catch { /* keep nulls */ }
@@ -1362,10 +1417,322 @@
     } catch { /* ignore */ }
   });
 
-  // Expose minimal read-only (+ scroll and resolution helper) API. `__ready` + `version`
+  // ---------------------------------------------------------------------------
+  // Phase 2: High-Precision Live Scraper & Throttled Emitter Subsystem
+  // ---------------------------------------------------------------------------
+
+  /** Strict numeric sanitizer: normalizes Unicode minus, strips commas, rejects ∅, n/a, NaN -> null */
+  function parseCleanNumber(raw) {
+    if (typeof raw === 'number') {
+      return Number.isFinite(raw) ? raw : null;
+    }
+    if (raw == null) return null;
+    let s = String(raw).trim();
+    if (!s) return null;
+
+    // Unicode minus normalization: − (\u2212), en-dash (\u2013), em-dash (\u2014) -> -
+    s = s.replace(/[\u2212\u2013\u2014]/g, '-');
+
+    // Reject non-numeric sentinels
+    if (/^(?:∅|Ø|◌|n\/?a|nan|null|undefined|--|-|\.)$/i.test(s)) {
+      return null;
+    }
+
+    // Handle K / M / B multipliers often seen in TV volume / indicators
+    let multiplier = 1;
+    const multMatch = s.match(/([KMBkmb%])\s*$/);
+    if (multMatch) {
+      const unit = multMatch[1].toUpperCase();
+      if (unit === 'K') multiplier = 1e3;
+      else if (unit === 'M') multiplier = 1e6;
+      else if (unit === 'B') multiplier = 1e9;
+      // % is kept at 1 so percentage values (e.g. 15.5%) are parsed directly as 15.5
+    }
+
+    // Strip currency symbols, commas, spaces
+    const cleaned = s.replace(/[^0-9.\-eE+]/g, '');
+    if (!cleaned || cleaned === '-' || cleaned === '.' || cleaned === '+') return null;
+
+    const num = Number(cleaned);
+    if (!Number.isFinite(num)) return null;
+    return num * multiplier;
+  }
+
+  let lastSeenBarTime = null;
+  let lastSeenOpen = null;
+  let lastEmitTime = 0;
+  let emitTimer = null;
+
+  function scrapeTradingViewDom() {
+    try {
+      // 1. Symbol & Timeframe extraction
+      let symbol = null;
+      let timeframe = null;
+
+      try {
+        if (typeof getSnapshot === 'function') {
+          const snap = getSnapshot();
+          if (snap && snap.symbol) symbol = snap.symbol;
+          if (snap && snap.timeframe) timeframe = unwrapTimeframe(snap.timeframe);
+        }
+      } catch (_) {}
+
+      if (!symbol) {
+        const symbolEl = document.querySelector('[data-name="header-toolbar-symbol-search"] .js-button-text, .chart-title__title, [data-name="legend-series-title"], [data-name="legend-source-title"]');
+        if (symbolEl && symbolEl.textContent.trim()) {
+          symbol = symbolEl.textContent.split('•')[0].trim();
+        }
+      }
+      if (!symbol && document.title) {
+        const m = document.title.match(/^([A-Za-z0-9_.\-:]+)/);
+        if (m && m[1] && m[1] !== 'TradingView') symbol = m[1];
+      }
+      symbol = cleanSymbol(symbol);
+
+      if (!timeframe) {
+        const tfEl = document.querySelector('#header-toolbar-intervals [aria-pressed="true"], [data-name="header-toolbar-intervals"] [aria-pressed="true"], [data-name="timeframes-menu"] [aria-pressed="true"], button[aria-pressed="true"]');
+        if (tfEl && tfEl.textContent.trim()) {
+          timeframe = unwrapTimeframe(tfEl.textContent.trim());
+        }
+      }
+      timeframe = unwrapTimeframe(timeframe) || '1m';
+
+      // 2. OHLCV extraction
+      let open = null;
+      let high = null;
+      let low = null;
+      let close = null;
+      let volume = null;
+      const tfMs = parseTimeframeToMs(timeframe);
+      const now = Date.now();
+      let barTimestamp = Math.floor(now / tfMs) * tfMs;
+
+      const seriesRow = document.querySelector('[data-name="legend-series-item"], [data-name="legend-source-item"], .seriesRow, div[class*="legend"] > div');
+      if (seriesRow) {
+        const seriesText = seriesRow.textContent || '';
+        const oMatch = seriesText.match(/O\s*([−\-+]?[0-9][0-9,.]*)/i);
+        const hMatch = seriesText.match(/H\s*([−\-+]?[0-9][0-9,.]*)/i);
+        const lMatch = seriesText.match(/L\s*([−\-+]?[0-9][0-9,.]*)/i);
+        const cMatch = seriesText.match(/C\s*([−\-+]?[0-9][0-9,.]*)/i);
+
+        if (oMatch) open = parseCleanNumber(oMatch[1]);
+        if (hMatch) high = parseCleanNumber(hMatch[1]);
+        if (lMatch) low = parseCleanNumber(lMatch[1]);
+        if (cMatch) close = parseCleanNumber(cMatch[1]);
+
+        const sO = seriesRow.querySelector('#sO, [data-name*="open"]');
+        const sH = seriesRow.querySelector('#sH, [data-name*="high"]');
+        const sL = seriesRow.querySelector('#sL, [data-name*="low"]');
+        const sC = seriesRow.querySelector('#sC, [data-name*="close"]');
+        if (sO && open == null) open = parseCleanNumber(sO.textContent);
+        if (sH && high == null) high = parseCleanNumber(sH.textContent);
+        if (sL && low == null) low = parseCleanNumber(sL.textContent);
+        if (sC && close == null) close = parseCleanNumber(sC.textContent);
+      }
+
+      const timeEl = document.querySelector('.timeAxisHighlight, #hoverTime, [class*="timeAxis"]');
+      if (timeEl && timeEl.textContent) {
+        const parsed = Date.parse(timeEl.textContent.trim());
+        if (!Number.isNaN(parsed) && parsed > 1e11) {
+          barTimestamp = Math.floor(parsed / tfMs) * tfMs;
+        }
+      }
+
+      // Candle-close detector
+      // Accurate transition: fires is_candle_close = 1 on candle boundary crossing (new bar open / time bucket shift)
+      let isCandleClose = 0;
+      const isBucketShift = lastSeenBarTime !== null && barTimestamp > lastSeenBarTime;
+      const isOpenShift = lastSeenOpen !== null && open !== null && Math.abs(open - lastSeenOpen) > 1e-6;
+
+      if (isBucketShift || isOpenShift) {
+        isCandleClose = 1;
+      }
+
+      lastSeenBarTime = barTimestamp;
+      if (open !== null) lastSeenOpen = open;
+
+      // 3. Built-in & Custom Pine Script Indicators Discovery
+      const indicators = {};
+      const indicatorInstanceCounts = {};
+
+      const indicatorRows = document.querySelectorAll(
+        '[data-name="legend-source-item"], [data-name="legend-indicator-item"], [data-name="legend-study-item"], div[class*="sourcesWrapper"] > div, .indRow, [data-name="data-window-item"]'
+      );
+
+      for (const row of indicatorRows) {
+        if (row.matches?.('[data-name="legend-series-item"], .seriesRow')) continue;
+
+        const isHidden = row.offsetParent === null && !row.matches?.('.indRow');
+        const rowText = (row.textContent || '').trim();
+        if (!rowText) continue;
+
+        let title = '';
+        const titleEl = row.querySelector('[data-name="legend-source-title"], [data-name="legend-indicator-title"], [class*="title"], span.t, [class*="titleWrapper"]');
+        if (titleEl && titleEl.textContent.trim()) {
+          title = titleEl.textContent.trim();
+        } else {
+          const firstPart = rowText.split(/[:\d−\-+]/)[0].trim();
+          title = firstPart || 'Indicator';
+        }
+
+        title = title.replace(/[∅Ø◌]/g, '').replace(/[•·|–—:;,\s]+$/g, '').trim().slice(0, 60);
+        if (!title) continue;
+
+        const isVolume = /^vol(?:ume)?/i.test(title);
+
+        indicatorInstanceCounts[title] = (indicatorInstanceCounts[title] || 0) + 1;
+        const instanceIndex = indicatorInstanceCounts[title];
+        const indicatorKey = `${title}__#${instanceIndex}`;
+
+        const plots = {};
+        const valueEls = row.querySelectorAll('[data-name*="value"], [class*="valueItem"], [class*="value"], span[id^="v"], span[id^="m"], span[class*="value"]');
+
+        let plotIndex = 0;
+        let hasAnyValidNumber = false;
+
+        if (valueEls.length > 0) {
+          for (const vel of valueEls) {
+            let plotName = null;
+            const prev = vel.previousElementSibling;
+            if (prev && (prev.classList.contains('valueTitle') || prev.getAttribute('data-name')?.includes('title') || prev.tagName === 'LABEL')) {
+              plotName = prev.textContent.replace(/[:\s]/g, '').trim();
+            }
+            if (!plotName) {
+              const labelAttr = vel.getAttribute('data-label') || vel.getAttribute('title') || vel.getAttribute('aria-label');
+              if (labelAttr) plotName = labelAttr.trim();
+            }
+            if (!plotName) {
+              plotName = `Plot_${plotIndex + 1}`;
+            }
+
+            const rawVal = vel.textContent;
+            const parsedVal = isHidden ? null : parseCleanNumber(rawVal);
+            const isAvail = parsedVal !== null && !isHidden;
+            if (isAvail) hasAnyValidNumber = true;
+
+            plots[plotName] = {
+              index: plotIndex,
+              value: parsedVal,
+              available: isAvail
+            };
+
+            if (isVolume && plotIndex === 0 && parsedVal !== null) {
+              volume = parsedVal;
+            }
+
+            plotIndex++;
+          }
+        } else {
+          const numMatches = [...rowText.matchAll(/([−\-+]?[0-9][0-9,.]*(?:\.[0-9]+)?\s*[KMB%]?)/g)];
+          for (let i = 0; i < numMatches.length; i++) {
+            const parsedVal = isHidden ? null : parseCleanNumber(numMatches[i][1]);
+            const isAvail = parsedVal !== null && !isHidden;
+            if (isAvail) hasAnyValidNumber = true;
+            const plotName = `Plot_${i + 1}`;
+            plots[plotName] = {
+              index: i,
+              value: parsedVal,
+              available: isAvail
+            };
+            if (isVolume && i === 0 && parsedVal !== null) {
+              volume = parsedVal;
+            }
+            plotIndex++;
+          }
+        }
+
+        indicators[indicatorKey] = {
+          name: title,
+          instanceIndex,
+          isReadable: hasAnyValidNumber && !isHidden,
+          plots
+        };
+      }
+
+      return {
+        tabId: window.__TV_TAB_ID__ || null,
+        symbol,
+        timeframe,
+        timestamp: barTimestamp,
+        is_candle_close: isCandleClose,
+        ohlcv: {
+          open: open,
+          high: high,
+          low: low,
+          close: close,
+          volume: volume
+        },
+        indicators
+      };
+    } catch (err) {
+      console.warn('[TV Alert Scraper] scrape error:', err);
+      return null;
+    }
+  }
+
+  function emitScrapedPayload() {
+    const now = Date.now();
+    if (now - lastEmitTime < 450) {
+      if (!emitTimer) {
+        emitTimer = setTimeout(() => {
+          emitTimer = null;
+          emitScrapedPayload();
+        }, 500 - (now - lastEmitTime));
+      }
+      return;
+    }
+    lastEmitTime = now;
+    const payload = scrapeTradingViewDom();
+    if (payload && (payload.symbol || payload.ohlcv.close !== null)) {
+      window.__TV_LAST_PAYLOAD__ = payload;
+      window.postMessage({
+        source: 'TV_ALERT_SCRAPER',
+        payload
+      }, '*');
+    }
+  }
+
+  // Setup DOM MutationObserver and periodic emitter
+  try {
+    const observer = new MutationObserver(() => {
+      emitScrapedPayload();
+    });
+    if (document.body) {
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: false
+      });
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        observer.observe(document.body, {
+          childList: true,
+          subtree: true,
+          characterData: true,
+          attributes: false
+        });
+      });
+    }
+    setInterval(emitScrapedPayload, 500);
+    setTimeout(emitScrapedPayload, 100);
+  } catch (_) {}
+
+  // Expose minimal read-only (+ scroll, resolution, scraper) API. `__ready` + `version`
   // let content.js detect us and upgrade across re-injections.
   Object.defineProperty(window, '__TV_EXTRACTOR__', {
-    value: { getSnapshot, getRange, scrollChart, setResolution: setChartResolution, capturedDatafeed, __ready: true, version: '2.0.0' },
+    value: {
+      getSnapshot,
+      getRange,
+      scrollChart,
+      setResolution: setChartResolution,
+      capturedDatafeed,
+      parseCleanNumber,
+      scrapeTradingViewDom,
+      emitScrapedPayload,
+      __ready: true,
+      version: '2.0.0'
+    },
     writable: false,
     configurable: true, // allow re-injection after SPA navigation
   });

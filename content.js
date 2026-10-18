@@ -320,20 +320,48 @@
   // Timeframe extraction (universal — no hardcoded timeframe anywhere)
   // ---------------------------------------------------------------------------
 
+  function unwrapTimeframe(val) {
+    if (val == null) return null;
+    if (typeof val === 'object') {
+      const candidate = val.value ?? val._value ?? val.interval ?? val.resolution ?? val.timeframe ?? val.tf ?? val.name ?? val.label ?? val.shortName ?? val.id ?? val.text;
+      if (candidate != null) {
+        if (typeof candidate === 'object') return unwrapTimeframe(candidate);
+        const candStr = String(candidate).trim();
+        if (candStr && !candStr.toLowerCase().includes('object')) return unwrapTimeframe(candStr);
+      }
+      if (typeof val.toString === 'function') {
+        const str = val.toString();
+        if (str && !str.toLowerCase().includes('object')) return unwrapTimeframe(str);
+      }
+      return null;
+    }
+    let s = String(val).trim();
+    if (!s || s.toLowerCase().includes('object') || s === 'undefined' || s === 'null') return null;
+    s = s.replace(/[\[\]"']/g, '').trim();
+    const num = Number(s);
+    if (!isNaN(num) && num > 0) {
+      if (num === 60) return '1h';
+      if (num === 120) return '2h';
+      if (num === 240) return '4h';
+      return `${num}m`;
+    }
+    return s;
+  }
+
   function extractTimeframe(pageModel) {
     // 1) Page model resolution, if Method A reached the widget.
     try {
-      const raw = pageModel?.timeframe;
-      if (raw) return normalizeTimeframe(String(raw));
+      const raw = unwrapTimeframe(pageModel?.timeframe);
+      if (raw) return normalizeTimeframe(raw);
     } catch { /* ignore */ }
 
     // 2) Active timeframe button in the toolbar.
     try {
       const active = queryFirst(SELECTORS.timeframeActive);
       if (active) {
-        const cand = active.getAttribute('data-value')
+        const cand = unwrapTimeframe(active.getAttribute('data-value')
           ?? active.getAttribute('data-interval')
-          ?? text(active).split(' ')[0];
+          ?? text(active).split(' ')[0]);
         if (cand) return normalizeTimeframe(cand);
       }
     } catch { /* ignore */ }
@@ -346,9 +374,9 @@
         '[data-name="header-toolbar-intervals"] button',
       ]);
       if (ivBtn) {
-        const cand = ivBtn.getAttribute('data-value')
+        const cand = unwrapTimeframe(ivBtn.getAttribute('data-value')
           ?? ivBtn.getAttribute('data-interval')
-          ?? text(ivBtn).split(/[\s|•]+/)[0];
+          ?? text(ivBtn).split(/[\s|•]+/)[0]);
         if (cand) return normalizeTimeframe(cand);
       }
     } catch { /* ignore */ }
@@ -377,15 +405,20 @@
     // 3) URL (?interval=60 / ?timeframe=D on shared links).
     try {
       const m = location.href.match(/[?&](?:interval|timeframe)=([^&]+)/i);
-      if (m) return normalizeTimeframe(decodeURIComponent(m[1]));
+      if (m) {
+        const cand = unwrapTimeframe(decodeURIComponent(m[1]));
+        if (cand) return normalizeTimeframe(cand);
+      }
     } catch { /* ignore */ }
 
-    return 'unknown';
+    return '1m';
   }
 
   /** Map TV internal codes ("60", "D") and labels ("1H", "1D") to canonical form. */
   function normalizeTimeframe(raw) {
-    const t = String(raw).trim();
+    const cleaned = unwrapTimeframe(raw);
+    if (!cleaned) return '1m';
+    const t = cleaned;
     if (RESOLUTION_MAP[t]) return RESOLUTION_MAP[t];
     const up = t.toUpperCase();
     if (RESOLUTION_MAP[up]) return RESOLUTION_MAP[up];
@@ -395,7 +428,7 @@
       const unit = { S: 's', M: 'm', H: 'h', D: 'D', W: 'W' }[m[2]];
       return `${m[1]}${unit}`;
     }
-    return t || 'unknown'; // never throw on unseen formats
+    return t || '1m'; // never throw on unseen formats
   }
 
   // ---------------------------------------------------------------------------
@@ -1136,10 +1169,72 @@
     } catch { /* ignore */ }
   }
 
-  /** Epoch ms -> Excel-friendly "YYYY-MM-DD HH:MM:SS" (UTC, deterministic). */
-  function excelDate(epochMs) {
+  /** Check if a symbol or title belongs to Indian exchanges (BSE / NSE / SENSEX / NIFTY). */
+  function isIndianMarket(sym) {
+    if (!sym) return false;
+    const s = String(sym).toUpperCase().trim();
+    return (
+      s.includes('SENSEX') ||
+      s.includes('NIFTY') ||
+      s.startsWith('BSE:') ||
+      s.startsWith('NSE:') ||
+      s.startsWith('MCX:') ||
+      s.includes('BANKNIFTY') ||
+      s.includes('FINNIFTY') ||
+      s.includes('MIDCPNIFTY') ||
+      s.includes('.BO') ||
+      s.includes('.NS') ||
+      s.includes('INDIA') ||
+      s.includes('BSE') ||
+      s.includes('NSE')
+    );
+  }
+
+  let currentSessionSymbol = null;
+  let currentSessionTz = 'IST'; // Default to Indian Standard Time (IST) per requirement
+
+  /**
+   * Epoch ms -> Excel-friendly "YYYY-MM-DD HH:MM:SS".
+   * For Indian market symbols (BSE / NSE / SENSEX / NIFTY), IST mode, or Indian trading hours:
+   * converts UTC to Indian Standard Time (UTC+5:30), accurately mapping 03:45:00 -> 09:15:00
+   * and 09:42:00 -> 15:12:00 in accordance with Indian standard trading time.
+   */
+  function excelDate(epochMs, sym = null) {
     try {
-      const d = new Date(epochMs);
+      if (epochMs == null || Number.isNaN(Number(epochMs))) return '';
+      let ms = Number(epochMs);
+
+      const targetSym = sym || currentSessionSymbol || '';
+
+      // Determine if IST applies:
+      // 1. Explicitly requested 'IST' (or default)
+      // 2. 'auto' mode and symbol is Indian market (e.g. SENSEX, NIFTY, BSE, NSE)
+      // 3. User browser locale is Indian or host is in.tradingview.com
+      // 4. Bar time pattern matches Indian market hours (03:45 UTC = 09:15 IST, 09:42 UTC = 15:12 IST)
+      const dUtc = new Date(ms);
+      const utcHour = dUtc.getUTCHours();
+      const isIndianMarketHours = (utcHour >= 3 && utcHour <= 10);
+
+      const isISTEnv = (
+        (typeof Intl !== 'undefined' && ['Asia/Kolkata', 'Asia/Calcutta'].includes(Intl.DateTimeFormat().resolvedOptions().timeZone)) ||
+        (typeof window !== 'undefined' && window.location?.hostname?.includes('in.tradingview.com'))
+      );
+
+      const isIndian = isIndianMarket(targetSym) || isIndianMarketHours || isISTEnv;
+
+      const useIST = (currentSessionTz === 'IST') ||
+                     (currentSessionTz === 'auto' && isIndian) ||
+                     (!currentSessionTz && isIndian);
+
+      if (useIST && currentSessionTz !== 'UTC') {
+        // Shift by +5 hours 30 minutes (19,800,000 ms) to convert UTC to IST
+        const istDate = new Date(ms + 19800000);
+        const p = (n) => String(n).padStart(2, '0');
+        return `${istDate.getUTCFullYear()}-${p(istDate.getUTCMonth() + 1)}-${p(istDate.getUTCDate())} ` +
+               `${p(istDate.getUTCHours())}:${p(istDate.getUTCMinutes())}:${p(istDate.getUTCSeconds())}`;
+      }
+
+      const d = new Date(ms);
       const p = (n) => String(n).padStart(2, '0');
       return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ` +
              `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
@@ -2454,7 +2549,7 @@
       const row = {
         symbol, timeframe,
         epochMs: b.epochMs ?? null,
-        datetime: b.epochMs != null ? excelDate(b.epochMs) : '',
+        datetime: b.epochMs != null ? excelDate(b.epochMs, symbol) : '',
         open: b.open ?? null, high: b.high ?? null,
         low: b.low ?? null, close: b.close ?? null,
       };
@@ -2596,7 +2691,9 @@
    * Orchestrator for TV_FETCH_RANGE. Returns the response object directly.
    * Never throws — all failures become { ok:false, error, message }.
    */
-  async function fetchRange(startMs, endMs, requestedTimeframe) {
+  async function fetchRange(startMs, endMs, requestedTimeframe, requestedTimezone = 'auto') {
+    if (requestedTimezone) currentSessionTz = requestedTimezone;
+
     // ---- 1. Validate the user-supplied range -------------------------------
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) {
       return { ok: false, error: 'INVALID_RANGE', message: 'Start/End dates could not be parsed. Use the date-time pickers.' };
@@ -2614,6 +2711,7 @@
     let symbol = extractSymbol(seriesEl);
     if (symbol === 'UNKNOWN' && pageModel?.symbol) symbol = pageModel.symbol;
     let timeframe = extractTimeframe(pageModel);
+    currentSessionSymbol = symbol;
 
     // If custom/requested timeframe was supplied and differs from active timeframe:
     if (requestedTimeframe && requestedTimeframe !== 'auto') {
@@ -2824,7 +2922,7 @@
           bars = inRangeFeed.map((r) => ({
             symbol, timeframe,
             epochMs: r.epochMs ?? null,
-            datetime: r.epochMs != null ? excelDate(r.epochMs) : '',
+            datetime: r.epochMs != null ? excelDate(r.epochMs, symbol) : '',
             open: r.open ?? null, high: r.high ?? null,
             low: r.low ?? null, close: r.close ?? null,
           }));
@@ -2907,7 +3005,7 @@
           const row = {
             symbol, timeframe,
             epochMs: r.epochMs ?? null,
-            datetime: r.epochMs != null ? excelDate(r.epochMs) : '',
+            datetime: r.epochMs != null ? excelDate(r.epochMs, symbol) : '',
             open: r.open ?? null, high: r.high ?? null,
             low: r.low ?? null, close: r.close ?? null,
           };
@@ -2999,7 +3097,7 @@
         // Async: panning + settling takes seconds. Keep the channel open.
         (async () => {
           try {
-            const res = await fetchRange(Number(msg.startMs), Number(msg.endMs), msg.requestedTimeframe);
+            const res = await fetchRange(Number(msg.startMs), Number(msg.endMs), msg.requestedTimeframe, msg.requestedTimezone);
             sendResponse(res);
           } catch (err) {
             try {
@@ -3028,6 +3126,27 @@
       }
     } catch { /* ignore */ }
   }, 5000);
+
+  // ---------------------------------------------------------------------------
+  // Phase 2: Main-World Scraper Bridge to Background Service Worker
+  // ---------------------------------------------------------------------------
+  window.addEventListener('message', (event) => {
+    try {
+      if (!event || !event.data || event.data.source !== 'TV_ALERT_SCRAPER') return;
+      const payload = event.data.payload;
+      if (!payload) return;
+
+      if (payload.timeframe) {
+        payload.timeframe = normalizeTimeframe(payload.timeframe);
+      }
+
+      // Relay payload to background.js
+      chrome.runtime.sendMessage({
+        type: 'TV_STREAM_PAYLOAD',
+        payload
+      }).catch?.(() => {});
+    } catch (_) {}
+  });
 
   // Boot.
   ensureInjected();

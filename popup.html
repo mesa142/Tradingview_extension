@@ -3,188 +3,419 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TV OHLC Extractor</title>
-  <style>
-    /* Compact popup theme: TradingView-dark inspired, no external CSS needed. */
-    :root {
-      --bg: #131722;
-      --panel: #1e2530;
-      --border: #2a2e39;
-      --text: #d1d4dc;
-      --muted: #787b86;
-      --accent: #2962ff;
-      --accent-hover: #1e53e5;
-      --green: #26a69a;
-      --red: #ef5350;
-    }
-    * { box-sizing: border-box; }
-    body {
-      width: 380px;
-      margin: 0;
-      padding: 14px;
-      background: var(--bg);
-      color: var(--text);
-      font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-      font-size: 13px;
-    }
-    h1 { font-size: 14px; margin: 0 0 2px; }
-    .sub { color: var(--muted); font-size: 11px; margin-bottom: 10px; }
-    .status {
-      display: flex; align-items: center; gap: 6px;
-      font-size: 11px; color: var(--muted); margin-bottom: 10px;
-    }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-    .dot.ok { background: var(--green); }
-    .dot.err { background: var(--red); }
-    .dot.live { background: var(--accent); animation: pulse 1.2s infinite; }
-    @keyframes pulse { 50% { opacity: 0.4; } }
-    .row { display: flex; gap: 8px; margin-bottom: 10px; }
-    button {
-      flex: 1;
-      padding: 8px 10px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      background: var(--panel);
-      color: var(--text);
-      cursor: pointer;
-      font-size: 12px;
-    }
-    button:hover:not(:disabled) { border-color: var(--accent); }
-    button:disabled { opacity: 0.5; cursor: default; }
-    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-    button.primary:hover:not(:disabled) { background: var(--accent-hover); }
-    /* Toggle switch */
-    .toggle-wrap {
-      display: flex; align-items: center; justify-content: space-between;
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 8px 10px;
-      margin-bottom: 10px;
-      font-size: 12px;
-    }
-    .switch { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
-    .switch input { opacity: 0; width: 0; height: 0; }
-    .slider {
-      position: absolute; inset: 0; border-radius: 20px;
-      background: var(--border); transition: 0.2s; cursor: pointer;
-    }
-    .slider::before {
-      content: ""; position: absolute; width: 14px; height: 14px;
-      left: 3px; top: 3px; border-radius: 50%; background: #fff; transition: 0.2s;
-    }
-    input:checked + .slider { background: var(--accent); }
-    input:checked + .slider::before { transform: translateX(16px); }
-    textarea {
-      width: 100%; height: 220px; resize: vertical;
-      background: #0f1420; color: #c9f7d4;
-      border: 1px solid var(--border); border-radius: 6px;
-      font-family: Consolas, "Courier New", monospace;
-      font-size: 11px; padding: 8px; white-space: pre;
-    }
-    .hint { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
-    .hint code { color: var(--text); }
-    /* Historical range export section */
-    .divider { border: 0; border-top: 1px solid var(--border); margin: 12px 0 10px; }
-    .section-title { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
-    .field {
-      display: grid; grid-template-columns: 44px 1fr; gap: 8px; align-items: center;
-      margin-bottom: 8px; font-size: 12px; color: var(--muted);
-    }
-    input[type="datetime-local"], select, input[type="text"] {
-      width: 100%; padding: 7px 8px;
-      background: var(--panel); color: var(--text);
-      border: 1px solid var(--border); border-radius: 6px;
-      font-size: 12px; color-scheme: dark;
-    }
-    input[type="datetime-local"]:focus, select:focus, input[type="text"]:focus { outline: none; border-color: var(--accent); }
-    .range-note { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.5; min-height: 16px; }
-    .range-note.warn { color: #ffb74d; }
-    .range-note.err { color: var(--red); }
-    .range-note.ok { color: var(--green); }
-  </style>
+  <title>TradingView Multi-Condition Alert Generator</title>
+  <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
-  <h1>📈 TV OHLC Extractor</h1>
-  <div class="sub">Real-time OHLC + indicators from any TradingView chart</div>
+  <!-- Header -->
+  <header class="app-header">
+    <div class="brand-title">
+      <span class="brand-icon">⚡</span>
+      <span>TradingView Alerts &amp; Extractor</span>
+    </div>
+    <div style="display:flex; align-items:center; gap:6px;">
+      <span class="badge" style="background:#1e2538; color:#7ee787; font-size:10px;">Side Panel Active</span>
+    </div>
+  </header>
 
-  <div class="status">
-    <span class="dot" id="statusDot"></span>
-    <span id="statusText">Connecting…</span>
-  </div>
+  <!-- Status Dashboard: 3 Separate Static Indicators (Green = Running, Red = Stopped, Amber = Reconnecting) -->
+  <div class="status-dashboard">
+    <div class="status-chips-row">
+      <!-- 1. Backend Status -->
+      <div class="status-chip" id="chipBackend" title="Local PC Backend Service (Port 3000)">
+        <span class="status-dot red" id="dotBackend"></span>
+        <span id="textBackend">Backend: Stopped</span>
+      </div>
 
-  <div class="row">
-    <button id="captureBtn" class="primary">⦉ Capture Current Candle</button>
-  </div>
+      <!-- 2. TradingView Chart Status -->
+      <div class="status-chip" id="chipChart" title="Active TradingView Chart Tab">
+        <span class="status-dot amber" id="dotChart"></span>
+        <span id="textChart">Chart: Detecting...</span>
+      </div>
 
-  <div class="toggle-wrap">
-    <span>🔴 Stream Live Data</span>
-    <label class="switch" title="Push legend updates into this popup live">
-      <input type="checkbox" id="streamToggle" />
-      <span class="slider"></span>
-    </label>
-  </div>
+      <!-- 3. Monitoring Status -->
+      <div class="status-chip" id="chipMonitoring" title="Alert Rule Monitoring Engine">
+        <span class="status-dot amber" id="dotMonitoring"></span>
+        <span id="textMonitoring">Monitoring: Idle</span>
+      </div>
+    </div>
 
-  <textarea id="output" readonly spellcheck="false" placeholder='Click "Capture Current Candle" while a TradingView chart tab is active…'></textarea>
-
-  <div class="row" style="margin-top:10px;">
-    <button id="copyBtn">📋 Copy to Clipboard</button>
-    <button id="downloadBtn">⬇ JSON</button>
-  </div>
-
-  <hr class="divider" />
-
-  <!-- Historical range → Excel-compatible CSV -->
-  <div class="section-title">📅 Historical Range Export</div>
-  <div class="field">
-    <label for="timeframeSelect">Timeframe</label>
-    <select id="timeframeSelect">
-      <option value="3m" selected>3 minutes (3m)</option>
-      <option value="auto">Auto (Active on Chart)</option>
-      <option value="1s">1 second (1s)</option>
-      <option value="5s">5 seconds (5s)</option>
-      <option value="15s">15 seconds (15s)</option>
-      <option value="30s">30 seconds (30s)</option>
-      <option value="1m">1 minute (1m)</option>
-      <option value="5m">5 minutes (5m)</option>
-      <option value="15m">15 minutes (15m)</option>
-      <option value="30m">30 minutes (30m)</option>
-      <option value="45m">45 minutes (45m)</option>
-      <option value="1h">1 hour (1h)</option>
-      <option value="2h">2 hours (2h)</option>
-      <option value="3h">3 hours (3h)</option>
-      <option value="4h">4 hours (4h)</option>
-      <option value="1D">1 Day (1D)</option>
-      <option value="1W">1 Week (1W)</option>
-      <option value="1M">1 Month (1M)</option>
-      <option value="custom">Custom...</option>
-    </select>
-  </div>
-  <div class="field" id="customTfField" style="display:none;">
-    <label for="customTfInput">Custom</label>
-    <input type="text" id="customTfInput" placeholder="e.g. 2m, 12h, 3D" />
-  </div>
-  <div class="field">
-    <label for="startInput">Start</label>
-    <input type="datetime-local" id="startInput" step="60" />
-  </div>
-  <div class="field">
-    <label for="endInput">End</label>
-    <input type="datetime-local" id="endInput" step="60" />
-  </div>
-  <div class="row">
-    <button id="fetchBtn" class="primary">⬇ Fetch &amp; Export to Excel (CSV)</button>
-  </div>
-  <div class="range-note" id="rangeNote"></div>
-  <div class="row" style="margin-top:8px;">
-    <button id="diagnoseBtn" title="Probe every frame of this tab and report where the chart legend lives">🩺 Diagnose chart access</button>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-top:2px;">
+      <div style="display:flex; gap:6px;">
+        <button class="btn btn-sm btn-primary" id="btnCheckStatus" title="Check connection status and refresh active chart">🔄 Check Status / Retry</button>
+        <button class="btn btn-sm" id="btnOpenTransferModal" title="Export &amp; Import rules to other browsers">🔄 Backup / Restore</button>
+      </div>
+      <span id="serviceDot" style="display:none;"></span>
+      <span id="serviceStatusText" style="display:none;"></span>
+      <span id="btnOneClickBridge" style="display:none;"></span>
+    </div>
   </div>
 
-  <div class="hint">
-    Works on <code>tradingview.com</code> charts &amp; embeds, any timeframe.
-    Streaming follows your crosshair + new candles in real time.
+  <!-- Navigation Tabs -->
+  <nav class="tabs-nav">
+    <button class="tab-nav-btn active" data-tab="tab-inspector">🏠 Home</button>
+    <button class="tab-nav-btn" data-tab="tab-builder">⚡ Rule Builder</button>
+    <button class="tab-nav-btn" data-tab="tab-rules">📋 Active Alerts</button>
+    <button class="tab-nav-btn" data-tab="tab-history">📜 Recent Alerts &amp; Settings</button>
+    <button class="tab-nav-btn" data-tab="tab-extractor">📊 CSV Export</button>
+  </nav>
+
+  <!-- TAB 1: Live Chart & Series Inspector -->
+  <section class="tab-pane active" id="tab-inspector">
+    <div class="ticker-bar" id="liveTickerBar">
+      <div class="ticker-item">
+        <span class="ticker-label">Symbol</span>
+        <span class="ticker-value" id="tickerSymbol">—</span>
+      </div>
+      <div class="ticker-item">
+        <span class="ticker-label">TF</span>
+        <span class="ticker-value" id="tickerTf">—</span>
+      </div>
+      <div class="ticker-item">
+        <span class="ticker-label">Close</span>
+        <span class="ticker-value" id="tickerClose" style="color:#26a69a;">—</span>
+      </div>
+      <div class="ticker-item">
+        <span class="ticker-label">O / H / L</span>
+        <span class="ticker-value" id="tickerOhl" style="font-size:10px;">—</span>
+      </div>
+      <div class="ticker-item">
+        <span class="ticker-label">Volume</span>
+        <span class="ticker-value" id="tickerVol">—</span>
+      </div>
+      <div class="ticker-item">
+        <span class="ticker-label">Candle State</span>
+        <span class="ticker-value" id="tickerCandleState" style="font-size:10px;">Intrabar</span>
+      </div>
+    </div>
+
+    <div class="section-title">
+      <span>Auto-Discovered Indicators &amp; Plots</span>
+      <div style="display:flex; gap:6px;">
+        <button class="btn btn-sm" id="btnRefreshInspector">↻ Refresh</button>
+        <button class="btn btn-sm btn-primary" id="btnSendToBuilder">Build Rule From This</button>
+      </div>
+    </div>
+
+    <div class="series-tree" id="seriesTreeContainer">
+      <div style="padding:16px; text-align:center; color:var(--muted);">
+        Listening for TradingView chart tab stream...
+      </div>
+    </div>
+  </section>
+
+  <!-- TAB 2: Visual Nested Rule Builder -->
+  <section class="tab-pane" id="tab-builder">
+    <div id="builderBridgeNotice" style="display:none; padding:8px 10px; background:#2a2415; border-left:3px solid #ffa726; border-radius:4px; margin-bottom:10px; font-size:11px; color:#ffcc80;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <span>⚠️ <strong>Bridge is Offline</strong> — Showing cached indicators &amp; symbol.</span>
+        <button class="btn btn-sm" id="btnReconnectBridge" style="background:#ffa726; color:#131722; font-weight:700;">🔄 Reconnect</button>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:10px;">
+      <div class="rule-meta-grid">
+        <div class="rule-meta-col rule-meta-name">
+          <label style="display:block; font-size:10px; color:#26a69a; font-weight:600; margin-bottom:2px;">Alert Name (Enter Manually)</label>
+          <input type="text" id="ruleNameInput" placeholder="e.g. NIFTY Bullish Cross" style="width:100%; border-color:#26a69a; font-weight:600;" autofocus />
+        </div>
+        <div class="rule-meta-col rule-meta-sym">
+          <label style="display:block; font-size:10px; color:var(--muted); margin-bottom:2px;">Symbol (Auto)</label>
+          <input type="text" id="ruleSymbolInput" placeholder="Auto-fetching..." style="width:100%;" />
+        </div>
+        <div class="rule-meta-col rule-meta-tf">
+          <label style="display:block; font-size:10px; color:var(--muted); margin-bottom:2px;">TF (Auto)</label>
+          <input type="text" id="ruleTfInput" placeholder="Auto" style="width:100%;" />
+        </div>
+      </div>
+      <!-- Trigger Mode / Timing Selection (Live Market & Candle Close) -->
+      <div style="margin-top:8px; padding-top:6px; border-top:1px solid rgba(255,255,255,0.06);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:3px;">
+          <label style="font-size:10px; color:#ffa726; font-weight:700;">⚡ Trigger Timing (Live Market &amp; Candle Close)</label>
+          <span style="font-size:9px; color:var(--muted);" id="triggerTimingHint">Both live market &amp; candle close confirmation</span>
+        </div>
+        <select id="ruleTriggerMode" style="width:100%; border-color:#ffa726; font-size:11px;">
+          <option value="BOTH" selected>⚡ Live Market + 🔔 Confirmed on Candle Close (Both — Recommended)</option>
+          <option value="CANDLE_CLOSE">🔔 Confirmed on Candle Close Only (Zero Noise)</option>
+          <option value="INTRABAR">⚡ Live Market (Intrabar Tick) Only</option>
+        </select>
+      </div>
+      <div class="row" style="justify-content:space-between; margin-top:8px; flex-wrap:wrap; gap:6px;">
+        <span style="font-size:10px; color:#26a69a;" id="symbolAutoSavedHint">⚡ Symbol, TF &amp; Indicators auto-fetch from active chart</span>
+        <button class="btn btn-sm btn-primary" id="btnAutoFillActiveTab">⚡ Refresh From Active Chart</button>
+      </div>
+    </div>
+
+    <div class="section-title">
+      <span>Multi-Condition Logic Tree (Arbitrary AND/OR Depth)</span>
+    </div>
+
+    <!-- Recursive Tree Builder Root -->
+    <div class="tree-builder-container" id="ruleTreeRoot">
+      <!-- Root Condition Group rendered dynamically by popup.js -->
+    </div>
+
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <span style="font-size:11px; color:var(--muted);" id="ruleValidationHint">Zero manual typing — series auto-populated</span>
+      <button class="btn btn-primary" id="btnSaveRule">💾 Save &amp; Activate Rule</button>
+    </div>
+  </section>
+
+  <!-- TAB 3: Active Rules & Monitoring -->
+  <section class="tab-pane" id="tab-rules">
+    <div class="section-title">
+      <span>Registered Alert Rules</span>
+      <div style="display:flex; gap:6px;">
+        <button class="btn btn-sm" id="btnExportRulesQuick" title="Export all alert rules to JSON">📤 Export</button>
+        <button class="btn btn-sm" id="btnImportRulesQuick" title="Import alert rules from JSON">📥 Import</button>
+        <button class="btn btn-sm" id="btnRefreshRules">↻ Reload</button>
+      </div>
+    </div>
+
+    <div class="data-table-wrapper">
+      <table class="styled-table" id="activeRulesTable">
+        <thead>
+          <tr>
+            <th>Rule Name</th>
+            <th>Symbol</th>
+            <th>TF</th>
+            <th>Status</th>
+            <th>Conditions</th>
+            <th>Triggers</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="activeRulesTbody">
+          <tr><td colspan="7" style="text-align:center; color:var(--muted); padding:16px;">Loading rules...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- TAB 4: Triggered Alerts History & Settings -->
+  <section class="tab-pane" id="tab-history">
+    <div class="section-title">
+      <span>Triggered Alerts History (30-Day SQLite Log)</span>
+      <button class="btn btn-sm" id="btnPruneHistory">🧹 Prune &gt;30d</button>
+    </div>
+
+    <div class="data-table-wrapper" style="margin-bottom:14px; max-height:190px;">
+      <table class="styled-table" id="alertsHistoryTable">
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Rule</th>
+            <th>Sym/TF</th>
+            <th>Event</th>
+            <th>Price</th>
+            <th>Telegram</th>
+          </tr>
+        </thead>
+        <tbody id="alertsHistoryTbody">
+          <tr><td colspan="6" style="text-align:center; color:var(--muted); padding:14px;">No alerts triggered yet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Telegram Bot Dispatch & Test Card -->
+    <div class="card">
+      <div class="section-title" style="margin-bottom:8px;">
+        <span>✈ Telegram Bot Instant Notifications</span>
+        <div>
+          <span id="tgStatusBadge" class="badge badge-unavailable">Not Configured</span>
+          <span id="tgBackendStatusBadge" class="badge badge-readable" style="display:none;">Ready</span>
+        </div>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:10px;">
+        <div>
+          <label style="display:block; font-size:10px; color:var(--muted); margin-bottom:2px;">Telegram Bot Token</label>
+          <div style="display:flex; gap:4px;">
+            <input type="password" id="tgTokenInput" placeholder="Paste bot token from @BotFather (e.g. 7123456789:AAHk...)" style="flex:1; font-family:var(--font-mono); font-size:11px;" />
+            <button class="btn btn-sm" id="btnToggleTgToken" type="button" title="Show / Hide Token" style="padding:4px 8px;">👁</button>
+          </div>
+        </div>
+
+        <div>
+          <label style="display:block; font-size:10px; color:var(--muted); margin-bottom:2px;">Telegram Chat ID</label>
+          <input type="text" id="tgChatIdInput" placeholder="Enter Chat ID (e.g. 123456789 or group -100123456789)" style="width:100%; font-family:var(--font-mono); font-size:11px;" />
+        </div>
+      </div>
+
+      <div class="row" style="justify-content:space-between; margin-bottom:6px; flex-wrap:wrap; gap:8px;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn btn-sm btn-primary" id="btnSaveAndTestTelegram">💾 Save &amp; Test Connection</button>
+          <button id="btnTestTelegram" style="display:none;"></button>
+        </div>
+        <button class="btn btn-sm" id="btnTestChime">🔔 Test Audio Chime</button>
+      </div>
+
+      <!-- Live Diagnostics Feedback -->
+      <div id="settingsFeedback" style="font-size:11px; padding:6px 8px; border-radius:4px; margin-top:6px; display:none; line-height:1.4;"></div>
+
+      <div style="margin-top:8px; font-size:10px; color:var(--muted); line-height:1.4; border-top:1px solid var(--border); padding-top:6px;">
+        💡 <strong>Quick Setup:</strong> 1. Message <code>@BotFather</code> on Telegram &rarr; <code>/newbot</code> to get Token. 2. Message <code>@userinfobot</code> to get your Chat ID. 3. Send <code>/start</code> to your bot in Telegram first!
+      </div>
+    </div>
+  </section>
+
+  <!-- TAB 5: CSV Extractor (Preserved Compatibility) -->
+  <section class="tab-pane" id="tab-extractor">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; padding:6px 0; border-bottom:1px solid var(--border);">
+      <button class="btn btn-sm" id="btnCsvBackToHome" style="display:inline-flex; align-items:center; gap:5px; font-weight:600;">
+        ← Back to Home
+      </button>
+      <span style="font-size:11px; color:var(--text-bright); font-weight:600;">📊 Historical Range &rarr; CSV Export</span>
+    </div>
+
+    <div class="row">
+      <button id="captureBtn" class="btn btn-primary" style="flex:1;">⦉ Capture Current Candle</button>
+    </div>
+
+    <div class="card" style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px;">
+      <span>🔴 Stream Live Data to Console</span>
+      <input type="checkbox" id="streamToggle" style="width:16px; height:16px;" />
+    </div>
+
+    <textarea id="output" readonly spellcheck="false" placeholder="Extracted candle snapshot JSON..." style="width:100%; height:120px; font-family:var(--font-mono); font-size:10px; margin-bottom:8px;"></textarea>
+
+    <div class="row">
+      <button id="copyBtn" class="btn btn-sm">📋 Copy JSON</button>
+      <button id="downloadBtn" class="btn btn-sm">⬇ Download JSON</button>
+    </div>
+
+    <div class="section-title" style="margin-top:12px;">
+      <span>Historical Range &rarr; CSV</span>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <label style="width:70px; font-size:11px;">Timeframe</label>
+        <select id="timeframeSelect" style="flex:1;">
+          <option value="3m" selected>3 minutes (3m)</option>
+          <option value="auto">Auto (Active on Chart)</option>
+          <option value="1m">1 minute (1m)</option>
+          <option value="5m">5 minutes (5m)</option>
+          <option value="15m">15 minutes (15m)</option>
+          <option value="1h">1 hour (1h)</option>
+          <option value="1D">1 Day (1D)</option>
+        </select>
+      </div>
+      <div class="row">
+        <label style="width:70px; font-size:11px;">Timezone</label>
+        <select id="timezoneSelect" style="flex:1;">
+          <option value="IST" selected>Indian Standard Time (IST, UTC+5:30: 09:15 to 15:30)</option>
+          <option value="auto">Auto-Detect (IST for Indian Markets, UTC for Global)</option>
+          <option value="UTC">Coordinated Universal Time (UTC)</option>
+        </select>
+      </div>
+      <div class="row">
+        <label style="width:70px; font-size:11px;">Start</label>
+        <input type="datetime-local" id="startInput" step="60" style="flex:1;" />
+      </div>
+      <div class="row">
+        <label style="width:70px; font-size:11px;">End</label>
+        <input type="datetime-local" id="endInput" step="60" style="flex:1;" />
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button id="fetchBtn" class="btn btn-primary" style="flex:1;">⬇ Fetch &amp; Export CSV</button>
+      </div>
+      <div id="rangeNote" style="font-size:11px; color:var(--muted); margin-top:4px;"></div>
+    </div>
+  </section>
+
+  <!-- Transfer Alerts Modal Dialog (Cross-Browser Export & Import) -->
+  <div class="modal-overlay" id="transferModal" style="display:none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <span class="modal-title">🔄 Transfer Alert Rules (Cross-Browser Backup)</span>
+        <button class="modal-close-btn" id="btnCloseTransferModal">✕</button>
+      </div>
+
+      <div class="transfer-tabs">
+        <button class="transfer-tab-btn active" id="tabBtnTransferExport">📤 Export (Save / Share)</button>
+        <button class="transfer-tab-btn" id="tabBtnTransferImport">📥 Import (Restore / Transfer)</button>
+      </div>
+
+      <!-- Export Panel -->
+      <div id="transferExportPane">
+        <p style="font-size:11px; color:var(--muted); margin-bottom:10px;">
+          Export all active alert rules, condition trees, and configurations into a portable JSON backup. Transfer this file to Chrome, Brave, or Edge on any computer.
+        </p>
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+          <button class="btn btn-primary btn-sm" id="btnDownloadRulesJson" style="flex:1;">⬇ Download rules.json</button>
+          <button class="btn btn-sm" id="btnCopyRulesJson" style="flex:1;">📋 Copy to Clipboard</button>
+        </div>
+        <textarea id="transferExportText" readonly spellcheck="false" style="width:100%; height:120px; font-family:var(--font-mono); font-size:10px; background:#0f121b; border:1px solid var(--border); border-radius:4px; padding:6px; color:#7ee787;"></textarea>
+      </div>
+
+      <!-- Import Panel -->
+      <div id="transferImportPane" style="display:none;">
+        <p style="font-size:11px; color:var(--muted); margin-bottom:8px;">
+          Select a previously exported <code>.json</code> file or paste JSON below to import all rules into this browser:
+        </p>
+        <div style="margin-bottom:10px;">
+          <input type="file" id="transferFileInput" accept=".json,application/json" style="font-size:11px; color:var(--text);" />
+        </div>
+        <textarea id="transferImportText" spellcheck="false" placeholder="Or paste JSON backup content here..." style="width:100%; height:110px; font-family:var(--font-mono); font-size:10px; background:#0f121b; border:1px solid var(--border); border-radius:4px; padding:6px; margin-bottom:8px;"></textarea>
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <span id="transferFeedback" style="font-size:10px;"></span>
+          <button class="btn btn-primary btn-sm" id="btnExecuteImport">📥 Import &amp; Activate Rules</button>
+        </div>
+      </div>
+    </div>
   </div>
 
+  <!-- One-Click Bridge Assistant Modal (Auto-Resolve & Fast Launch) -->
+  <div class="modal-overlay" id="bridgeLaunchModal" style="display:none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <span class="modal-title">⚡ Local PC Bridge &amp; Backend Assistant</span>
+        <button class="modal-close-btn" id="btnCloseBridgeModal">✕</button>
+      </div>
+      <div style="padding:4px 0 10px 0;">
+        <div style="background:#1a1e29; border:1px solid var(--border); border-radius:6px; padding:10px 12px; margin-bottom:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span style="font-weight:600; font-size:11px;">Bridge Connection Status:</span>
+            <span id="bridgeAssistantStatus" class="badge badge-unavailable">Scanning Ports...</span>
+          </div>
+          <div style="font-size:11px; color:var(--text-secondary); line-height:1.4;" id="bridgeAssistantMsg">
+            Checking ports 8765, 3000, 3001, 3050...
+          </div>
+        </div>
+
+        <div style="font-size:11px; font-weight:600; margin-bottom:6px;">Quick Actions:</div>
+        
+        <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;">
+          <button class="btn btn-primary btn-sm" id="btnAssistantRetryConnect" style="text-align:left; padding:8px 12px;">
+            🔄 <strong>Retry &amp; Scan All Ports Now</strong>
+            <div style="font-size:9px; opacity:0.8; margin-top:2px;">Probes ports 8765, 3000, 3001, 3050, 8080 instantly</div>
+          </button>
+          
+          <button class="btn btn-sm" id="btnAssistantCopyCommand" style="text-align:left; padding:8px 12px;">
+            📋 <strong>Copy Service Start Command</strong>
+            <div style="font-size:9px; opacity:0.8; margin-top:2px;">Copies <code>npm run dev</code> or <code>start start_service.bat</code> to clipboard</div>
+          </button>
+
+          <button class="btn btn-sm" id="btnAssistantDownloadBat" style="text-align:left; padding:8px 12px;">
+            ⬇ <strong>Download start_service.bat</strong>
+            <div style="font-size:9px; opacity:0.8; margin-top:2px;">Fresh, auto-installing batch launcher for Windows PC</div>
+          </button>
+
+          <button class="btn btn-sm" id="btnAssistantOpenWebConsole" style="text-align:left; padding:8px 12px;">
+            🌐 <strong>Open Web Management Console (http://localhost:3000)</strong>
+            <div style="font-size:9px; opacity:0.8; margin-top:2px;">Direct link to browser-based dashboard</div>
+          </button>
+        </div>
+
+        <div style="background:#131722; border-left:3px solid #2962ff; padding:8px 10px; border-radius:4px; font-size:10px; color:var(--text-secondary);">
+          💡 <strong>Auto-Resolve Note:</strong> The extension also runs in <strong>Standalone Browser Mode</strong>. Alert rules, chart indicators, and audio chimes operate in Chrome even if the PC service is offline!
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
   <script src="chrome-shim.js"></script>
   <script src="popup.js"></script>
 </body>
